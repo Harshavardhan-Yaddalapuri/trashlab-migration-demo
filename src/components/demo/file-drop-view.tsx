@@ -120,23 +120,24 @@ export function FileDropView() {
       // Files go straight to Blob storage from the browser: a serverless
       // function request body caps out around 4.5MB, and a full legacy
       // export easily exceeds that. Only the resulting blob URLs (a few
-      // hundred bytes total) go to the migration-jobs API.
-      const uploaded = await Promise.all(
-        files.map(async (f) => {
-          const blob = await upload(f.name, f.file, {
-            access: "public",
-            handleUploadUrl: "/api/blob-upload",
-          });
-          return { kind: f.sourceKind, fileName: f.name, recordCount: f.records, blobUrl: blob.url };
-        }),
-      );
+      // hundred bytes total) go to the migration-jobs API. Uploaded
+      // sequentially, not in parallel -- concurrent uploads were tripping
+      // an error on the Blob API.
+      const uploaded: { kind: SourceKind; fileName: string; recordCount: number; blobUrl: string }[] = [];
+      for (const f of files) {
+        const blob = await upload(f.name, f.file, {
+          access: "public",
+          handleUploadUrl: "/api/blob-upload",
+        });
+        uploaded.push({ kind: f.sourceKind, fileName: f.name, recordCount: f.records, blobUrl: blob.url });
+      }
       const created = await createMigrationJob(uploaded);
       if (created) {
         router.push(`/migrate/processing?job=${created.jobId}`);
         return;
       }
-    } catch {
-      // fall through to error state below
+    } catch (err) {
+      console.error("startMigration failed:", err);
     }
     setStarting(false);
     setStartError(true);
