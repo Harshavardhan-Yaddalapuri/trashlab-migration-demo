@@ -3,7 +3,6 @@
  * GET  /api/v1/migration-jobs — list jobs, newest first.
  */
 
-import { get } from "@vercel/blob";
 import { desc } from "drizzle-orm";
 import { after, NextRequest, NextResponse } from "next/server";
 import { fnv1a } from "@/data/generate";
@@ -39,12 +38,12 @@ async function resolveTenantId(tenantId?: string): Promise<string> {
   return created.id;
 }
 
-/** Fetch a source file's real content from Blob storage (private, needs the read-write token). */
+/** Fetch a source file's real content from Blob storage (public, plain fetch). */
 async function fetchBlobContent(blobUrl: string): Promise<string | undefined> {
   try {
-    const result = await get(blobUrl, { access: "private" });
-    if (result === null || result.stream === null) return undefined;
-    return await new Response(result.stream).text();
+    const res = await fetch(blobUrl);
+    if (!res.ok) return undefined;
+    return await res.text();
   } catch (err) {
     console.error(`failed to fetch blob content from ${blobUrl}:`, err);
     return undefined;

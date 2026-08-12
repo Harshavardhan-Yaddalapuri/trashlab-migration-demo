@@ -124,7 +124,7 @@ export function FileDropView() {
       const uploaded = await Promise.all(
         files.map(async (f) => {
           const blob = await upload(f.name, f.file, {
-            access: "private",
+            access: "public",
             handleUploadUrl: "/api/blob-upload",
           });
           return { kind: f.sourceKind, fileName: f.name, recordCount: f.records, blobUrl: blob.url };
