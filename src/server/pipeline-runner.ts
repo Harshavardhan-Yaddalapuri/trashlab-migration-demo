@@ -24,12 +24,25 @@
  * budget.
  */
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { from as copyFrom } from "pg-copy-streams";
 import { buildMigrationGraph, initialState } from "@/pipeline/graph";
 import type { ExceptionIssue, MigrationStatus, ResolvedEntity, SourceFile } from "@/lib/types";
 import { db, pool } from "@/server/db/client";
 import { migrationJobs } from "@/server/db/schema";
+
+// TEMP diagnostic: console.log from after() background execution isn't
+// reliably showing up in `vercel logs`, so checkpoint timing goes to a
+// real committed DB write instead, which we can query with certainty.
+async function debugLog(jobId: string, msg: string): Promise<void> {
+  try {
+    await db.execute(
+      sql`UPDATE migration_jobs SET persist_log = persist_log || ${JSON.stringify([`${Date.now()} ${msg}`])}::jsonb WHERE id = ${jobId}`,
+    );
+  } catch {
+    // best-effort diagnostic only
+  }
+}
 
 /** CSV-encodes one value for COPY ... FORMAT csv. Null/undefined become an
  * unquoted empty field (COPY's CSV-mode NULL representation); everything
@@ -45,21 +58,28 @@ function csvRow(values: unknown[]): string {
   return values.map(csvField).join(",") + "\n";
 }
 
-async function copyInsert<T>(tableName: string, columns: string[], rows: T[], rowToValues: (row: T) => unknown[]): Promise<void> {
+async function copyInsert<T>(
+  jobId: string,
+  tableName: string,
+  columns: string[],
+  rows: T[],
+  rowToValues: (row: T) => unknown[],
+): Promise<void> {
   if (rows.length === 0) return;
   const t0 = Date.now();
-  console.log(`[copy] ${tableName} start (${rows.length} rows)`);
+  await debugLog(jobId, `copy ${tableName} start (${rows.length} rows)`);
   const client = await pool.connect();
   try {
     const stream = client.query(copyFrom(`COPY ${tableName} (${columns.join(", ")}) FROM STDIN WITH (FORMAT csv)`));
     const csv = rows.map((row) => csvRow(rowToValues(row))).join("");
     const tBuilt = Date.now();
+    await debugLog(jobId, `copy ${tableName} built (${tBuilt - t0}ms), sending`);
     await new Promise<void>((resolve, reject) => {
       stream.on("error", reject);
       stream.on("finish", resolve);
       stream.end(csv);
     });
-    console.log(`[copy] ${tableName} done in ${Date.now() - t0}ms (build=${tBuilt - t0}ms, transfer=${Date.now() - tBuilt}ms)`);
+    await debugLog(jobId, `copy ${tableName} done (${Date.now() - t0}ms total)`);
   } finally {
     client.release();
   }
@@ -219,14 +239,17 @@ export async function runPipelineForJob(jobId: string, sourceFiles: SourceFile[]
     // None of these four tables have a DB-level FK on each other (only on
     // migration_jobs, already committed), so their COPY streams can run
     // concurrently on separate connections instead of waiting on one another.
+    await debugLog(jobId, `persist start (compute took ${Date.now() - runStart}ms)`);
     await Promise.all([
       copyInsert(
+        jobId,
         "resolved_entities",
         ["id", "job_id", "entity_type", "cluster_id", "confidence", "merged", "canonical_fields"],
         final.resolved,
         (r) => [r.id, jobId, r.entityType, r.clusterId, r.confidence, r.merged, r.canonicalFields],
       ),
       copyInsert(
+        jobId,
         "proposals",
         ["id", "job_id", "resolved_entity_id", "entity_type", "target_table", "target_id", "confidence", "rule_version", "status", "mapped_fields"],
         final.proposals,
@@ -244,6 +267,7 @@ export async function runPipelineForJob(jobId: string, sourceFiles: SourceFile[]
         ],
       ),
       copyInsert(
+        jobId,
         "exceptions",
         [
           "id",
@@ -281,7 +305,7 @@ export async function runPipelineForJob(jobId: string, sourceFiles: SourceFile[]
           ];
         },
       ),
-      copyInsert("audit_events", ["id", "job_id", "type", "actor", "payload", "at"], final.audit, (a) => [
+      copyInsert(jobId, "audit_events", ["id", "job_id", "type", "actor", "payload", "at"], final.audit, (a) => [
         a.id,
         jobId,
         a.type,
