@@ -12,7 +12,10 @@ declare global {
 }
 
 function createPool(): Pool {
-  return new Pool({ connectionString: databaseUrl() });
+  // Pipeline persistence runs several batch inserts concurrently per
+  // table (see pipeline-runner.ts's INSERT_CONCURRENCY); give the pool
+  // enough headroom for that plus normal request traffic.
+  return new Pool({ connectionString: databaseUrl(), max: 15 });
 }
 
 const pool = globalThis.__trashlabPool ?? createPool();

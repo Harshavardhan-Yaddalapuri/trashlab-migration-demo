@@ -14,6 +14,12 @@ import { getMigrationJob } from "@/lib/api";
 import type { StageId } from "@/lib/api";
 
 const TERMINAL_STATUSES = new Set(["completed", "failed"]);
+// Safety net: if the server process running the pipeline gets killed by
+// the platform's function timeout mid-run, our own server-side error
+// handling never gets a chance to mark the job "failed" -- there's
+// nothing to catch. Stop polling and show a real error instead of
+// spinning forever once this much time has passed.
+const MAX_WAIT_MS = 8 * 60 * 1000;
 
 const STAGE_ORDER: StageId[] = ["intake", "normalize", "resolve", "map", "validate", "review", "commit"];
 
@@ -39,8 +45,14 @@ export function ProcessingView() {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     let misses = 0;
+    const startedAt = Date.now();
 
     const poll = async () => {
+      if (Date.now() - startedAt > MAX_WAIT_MS) {
+        setFailedToStart(true);
+        return;
+      }
+
       const job = await getMigrationJob(jobId);
       if (cancelled) return;
 
