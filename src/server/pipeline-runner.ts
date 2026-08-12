@@ -236,83 +236,83 @@ export async function runPipelineForJob(jobId: string, sourceFiles: SourceFile[]
     const resolvedById = new Map<string, ResolvedEntity>(final.resolved.map((r) => [r.id, r]));
     const resolvedIds = new Set(resolvedById.keys());
 
-    // None of these four tables have a DB-level FK on each other (only on
-    // migration_jobs, already committed), so their COPY streams can run
-    // concurrently on separate connections instead of waiting on one another.
+    // TEMP DIAGNOSTIC: sequential instead of concurrent (Promise.all) --
+    // testing whether 4 simultaneous pool.connect()+COPY streams right
+    // after ~28s of heavy pipeline compute contend for something (memory,
+    // connections) that stalls all of them, even though a standalone
+    // benchmark showed a single COPY of this data transfers in ~1s.
     await debugLog(jobId, `persist start (compute took ${Date.now() - runStart}ms)`);
-    await Promise.all([
-      copyInsert(
+    await copyInsert(
+      jobId,
+      "resolved_entities",
+      ["id", "job_id", "entity_type", "cluster_id", "confidence", "merged", "canonical_fields"],
+      final.resolved,
+      (r) => [r.id, jobId, r.entityType, r.clusterId, r.confidence, r.merged, r.canonicalFields],
+    );
+    await copyInsert(
+      jobId,
+      "proposals",
+      ["id", "job_id", "resolved_entity_id", "entity_type", "target_table", "target_id", "confidence", "rule_version", "status", "mapped_fields"],
+      final.proposals,
+      (p) => [
+        p.id,
         jobId,
-        "resolved_entities",
-        ["id", "job_id", "entity_type", "cluster_id", "confidence", "merged", "canonical_fields"],
-        final.resolved,
-        (r) => [r.id, jobId, r.entityType, r.clusterId, r.confidence, r.merged, r.canonicalFields],
-      ),
-      copyInsert(
-        jobId,
-        "proposals",
-        ["id", "job_id", "resolved_entity_id", "entity_type", "target_table", "target_id", "confidence", "rule_version", "status", "mapped_fields"],
-        final.proposals,
-        (p) => [
-          p.id,
+        p.resolvedEntityId,
+        resolvedById.get(p.resolvedEntityId)?.entityType ?? "unknown",
+        p.targetTable,
+        p.targetId,
+        p.confidence,
+        p.ruleVersion,
+        p.status,
+        p.mappedFields ?? null,
+      ],
+    );
+    await copyInsert(
+      jobId,
+      "exceptions",
+      [
+        "id",
+        "job_id",
+        "type",
+        "severity",
+        "summary",
+        "evidence",
+        "suggested_fix",
+        "review_status",
+        "resolved_entity_id",
+        "confidence",
+        "source_record",
+        "created_at",
+        "resolved_at",
+      ],
+      final.exceptions,
+      (e) => {
+        const resolvedEntityId = inferResolvedEntityId(e, resolvedIds);
+        const entity = resolvedEntityId ? resolvedById.get(resolvedEntityId) : undefined;
+        return [
+          e.id,
           jobId,
-          p.resolvedEntityId,
-          resolvedById.get(p.resolvedEntityId)?.entityType ?? "unknown",
-          p.targetTable,
-          p.targetId,
-          p.confidence,
-          p.ruleVersion,
-          p.status,
-          p.mappedFields ?? null,
-        ],
-      ),
-      copyInsert(
-        jobId,
-        "exceptions",
-        [
-          "id",
-          "job_id",
-          "type",
-          "severity",
-          "summary",
-          "evidence",
-          "suggested_fix",
-          "review_status",
-          "resolved_entity_id",
-          "confidence",
-          "source_record",
-          "created_at",
-          "resolved_at",
-        ],
-        final.exceptions,
-        (e) => {
-          const resolvedEntityId = inferResolvedEntityId(e, resolvedIds);
-          const entity = resolvedEntityId ? resolvedById.get(resolvedEntityId) : undefined;
-          return [
-            e.id,
-            jobId,
-            e.type,
-            e.severity,
-            e.summary,
-            e.evidence,
-            e.suggestedFix,
-            e.reviewStatus,
-            resolvedEntityId,
-            entity?.confidence ?? 0,
-            resolvedEntityId ?? "unknown",
-            new Date(e.createdAt),
-            e.resolvedAt ? new Date(e.resolvedAt) : null,
-          ];
-        },
-      ),
-      copyInsert(jobId, "audit_events", ["id", "job_id", "type", "actor", "payload", "at"], final.audit, (a) => [
-        a.id,
-        jobId,
-        a.type,
-        a.actor,
-        a.payload,
-        new Date(a.at),
-      ]),
+          e.type,
+          e.severity,
+          e.summary,
+          e.evidence,
+          e.suggestedFix,
+          e.reviewStatus,
+          resolvedEntityId,
+          entity?.confidence ?? 0,
+          resolvedEntityId ?? "unknown",
+          new Date(e.createdAt),
+          e.resolvedAt ? new Date(e.resolvedAt) : null,
+        ];
+      },
+    );
+    await copyInsert(jobId, "audit_events", ["id", "job_id", "type", "actor", "payload", "at"], final.audit, (a) => [
+      a.id,
+      jobId,
+      a.type,
+      a.actor,
+      a.payload,
+      new Date(a.at),
     ]);
     console.log(`[pipeline] ${jobId} persistence done in ${Date.now() - runStart}ms total`);
   } catch (err) {
