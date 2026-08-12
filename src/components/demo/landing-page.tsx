@@ -5,6 +5,11 @@
  * then the "right AND fast" solution framing. Has a Start button that
  * kicks off the demo flow.
  *
+ * Customer-facing: speaks in outcomes (live in 2 days, no re-keying,
+ * nothing lost), NOT internal architecture (no agent names, no
+ * auto-map jargon). The engineering proof lives in the GitHub repo,
+ * which the founder reviews separately.
+ *
  * Styled to match TrashLab's production design language:
  * Manrope, deep indigo #1a174f, cyan #10A6CC, emerald #10B981,
  * light theme with soft indigo tints, rounded cards, pill CTAs.
@@ -17,8 +22,6 @@ import { config } from "@/lib/config";
 
 const FAQ_QUOTE =
   "Implementation depends on the size of your operation. Larger fleets with multiple yards, recurring routes, and existing software take longer because clean data migration, training, and rollout matter more than going fast.";
-
-const AGENTS = ["Orchestrator", "Intake", "Normalizer", "Resolver", "Mapper", "Validator", "Trainer", "Eval"];
 
 export function LandingPage() {
   const startDemo = useDemoStore((s) => s.startDemo);
@@ -44,7 +47,7 @@ export function LandingPage() {
         </span>
       </header>
 
-      {/* Hero — gradient indigo to cyan, TrashLab style */}
+      {/* Hero */}
       <main className="flex flex-1 flex-col items-center justify-center px-6 py-16">
         <div className="max-w-3xl text-center">
           {/* Problem: FAQ quote */}
@@ -71,22 +74,14 @@ export function LandingPage() {
               Right <span className="text-[#10a6cc]">AND</span> Fast.
             </h2>
             <p className="mx-auto mt-6 max-w-xl text-base leading-7 text-slate-600">
-              An agent fleet that cleans 150,000 records, trains your team, and gets you live in 2 days. Not &quot;fast and dirty.&quot; Not &quot;slow and careful.&quot; Both.
+              Move your entire operation to TrashLab without re-keying a single record. Your customers, containers, routes, and billing history come over clean. Your team is trained before day one. You are live in days, not weeks.
             </p>
           </div>
 
-          {/* Stats teaser — TrashLab card style */}
+          {/* Outcomes — customer language, not internal metrics */}
           <div className="mb-12 grid grid-cols-3 gap-4">
             <div className="rounded-2xl border border-[#e0deff] bg-[#f7f7ff] px-6 py-5">
               <p className="text-3xl font-extrabold tabular-nums text-[#10b981]">
-                99.2%
-              </p>
-              <p className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-[#6260af]">
-                Auto-Mapped
-              </p>
-            </div>
-            <div className="rounded-2xl border border-[#e0deff] bg-[#f7f7ff] px-6 py-5">
-              <p className="text-3xl font-extrabold tabular-nums text-[#1a174f]">
                 2 Days
               </p>
               <p className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-[#6260af]">
@@ -95,10 +90,18 @@ export function LandingPage() {
             </div>
             <div className="rounded-2xl border border-[#e0deff] bg-[#f7f7ff] px-6 py-5">
               <p className="text-3xl font-extrabold tabular-nums text-[#1a174f]">
+                150k
+              </p>
+              <p className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-[#6260af]">
+                Records Moved Clean
+              </p>
+            </div>
+            <div className="rounded-2xl border border-[#e0deff] bg-[#f7f7ff] px-6 py-5">
+              <p className="text-3xl font-extrabold tabular-nums text-[#1a174f]">
                 0
               </p>
               <p className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-[#6260af]">
-                Silent Errors
+                Lost or Duplicated
               </p>
             </div>
           </div>
@@ -108,23 +111,11 @@ export function LandingPage() {
             onClick={startDemo}
             className="group inline-flex items-center gap-3 rounded-full bg-[#312d97] px-10 py-4 text-sm font-semibold text-white transition-all hover:bg-[#5149d7] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#5149d7] focus-visible:ring-offset-2"
           >
-            Start the 90-Second Demo
+            See It In Action
             <span className="transition-transform group-hover:translate-x-1" aria-hidden>
               {"->"}
             </span>
           </button>
-
-          {/* Fleet preview — TrashLab pill chips */}
-          <div className="mt-16 flex flex-wrap items-center justify-center gap-2">
-            {AGENTS.map((agent) => (
-              <span
-                key={agent}
-                className="rounded-full border border-[#e0deff] bg-[#f7f7ff] px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#5149d7]"
-              >
-                {agent}
-              </span>
-            ))}
-          </div>
         </div>
       </main>
 

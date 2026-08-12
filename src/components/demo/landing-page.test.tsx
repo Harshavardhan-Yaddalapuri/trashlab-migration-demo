@@ -18,45 +18,47 @@ describe("LandingPage", () => {
 
   it("renders the solution framing with Right AND Fast", () => {
     render(<LandingPage />);
-    // The h2 contains "Right", "AND", "Fast." as separate text nodes
     const heading = screen.getByRole("heading", { level: 2 });
     expect(heading.textContent).toMatch(/Right/);
     expect(heading.textContent).toMatch(/AND/);
     expect(heading.textContent).toMatch(/Fast/);
   });
 
-  it("renders the 90-second demo button", () => {
+  it("renders the See It In Action button", () => {
     render(<LandingPage />);
     expect(
-      screen.getByText(/Start the 90-Second Demo/i),
+      screen.getByText(/See It In Action/i),
     ).toBeInTheDocument();
   });
 
-  it("renders the stats teaser with 99.2%", () => {
-    render(<LandingPage />);
-    expect(screen.getByText("99.2%")).toBeInTheDocument();
-  });
-
-  it("renders stats teaser with 2 Days", () => {
+  it("renders the 2 Days outcome stat", () => {
     render(<LandingPage />);
     expect(screen.getByText("2 Days")).toBeInTheDocument();
   });
 
-  it("renders the 0 silent errors stat", () => {
+  it("renders the 150k Records Moved Clean stat", () => {
     render(<LandingPage />);
-    expect(screen.getAllByText("0").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("150k")).toBeInTheDocument();
+    expect(screen.getByText("Records Moved Clean")).toBeInTheDocument();
   });
 
-  it("renders fleet agent names", () => {
+  it("renders the 0 Lost or Duplicated stat", () => {
     render(<LandingPage />);
-    expect(screen.getByText("Orchestrator")).toBeInTheDocument();
-    expect(screen.getByText("Normalizer")).toBeInTheDocument();
-    expect(screen.getByText("Validator")).toBeInTheDocument();
+    expect(screen.getByText("0")).toBeInTheDocument();
+    expect(screen.getByText("Lost or Duplicated")).toBeInTheDocument();
+  });
+
+  it("does NOT show internal agent names to customers", () => {
+    render(<LandingPage />);
+    expect(screen.queryByText("Orchestrator")).not.toBeInTheDocument();
+    expect(screen.queryByText("Normalizer")).not.toBeInTheDocument();
+    expect(screen.queryByText("Validator")).not.toBeInTheDocument();
+    expect(screen.queryByText("Eval")).not.toBeInTheDocument();
   });
 
   it("clicking start button advances to file-drop phase", () => {
     render(<LandingPage />);
-    const button = screen.getByText(/Start the 90-Second Demo/i);
+    const button = screen.getByText(/See It In Action/i);
     fireEvent.click(button);
     expect(useDemoStore.getState().phase).toBe("file-drop");
     expect(useDemoStore.getState().isRunning).toBe(true);
@@ -64,11 +66,9 @@ describe("LandingPage", () => {
 
   it("renders the footer with dataset info", () => {
     render(<LandingPage />);
-    // Footer contains Summit Disposal Services
     expect(
       screen.getByText(/Summit Disposal Services/i),
     ).toBeInTheDocument();
-    // 150,000 records appears in the solution text AND footer
     expect(
       screen.getAllByText(/150,000 records/i).length,
     ).toBeGreaterThanOrEqual(1);
