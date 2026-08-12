@@ -17,11 +17,15 @@ import { useRef, useState } from "react";
 import { useDemoStore } from "@/components/demo/demo-store";
 import { formatCount } from "@/components/ui/format";
 import { useRouter } from "next/navigation";
+import { createMigrationJob } from "@/lib/api";
+import type { SourceKind } from "@/lib/types";
 
 interface DropFile {
   name: string;
   kind: string;
+  sourceKind: SourceKind;
   records: number;
+  content: string;
 }
 
 const AGENTS = ["Orchestrator", "Intake", "Normalizer", "Resolver", "Mapper", "Validator", "Trainer", "Eval"];
@@ -34,6 +38,15 @@ function detectKind(name: string): string {
   if (lower.includes("transfer") || lower.includes("scale") || lower.includes("weigh")) return "Transfer Station";
   if (lower.includes("legacy") || lower.includes("paper")) return "Legacy Export";
   return "Source Export";
+}
+
+/** Map a filename to the API's SourceKind enum. */
+function detectSourceKind(name: string): SourceKind {
+  const lower = name.toLowerCase();
+  if (lower.includes("quickbooks") || lower.includes("qb")) return "quickbooks-export";
+  if (lower.includes("transfer") || lower.includes("scale") || lower.includes("weigh")) return "transfer-spreadsheet";
+  if (lower.includes("legacy") || lower.includes("paper")) return "legacy-export";
+  return "routepro-csv";
 }
 
 /** Count real data rows in a file's text content. */
@@ -62,25 +75,28 @@ function countRows(content: string, name: string): number {
   return count;
 }
 
-/** Read a File's text content and resolve with the row count. */
-function readFileRows(file: File): Promise<number> {
+/** Read a File's text content and resolve with the content + row count. */
+function readFileRows(file: File): Promise<{ content: string; records: number }> {
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = () => {
       const content = String(reader.result ?? "");
-      resolve(countRows(content, file.name));
+      resolve({ content, records: countRows(content, file.name) });
     };
-    reader.onerror = () => resolve(0);
+    reader.onerror = () => resolve({ content: "", records: 0 });
     reader.readAsText(file);
   });
 }
 
 export function FileDropView() {
   const router = useRouter();
+  const jobId = useDemoStore((s) => s.jobId);
+  const setJobId = useDemoStore((s) => s.setJobId);
   const [files, setFiles] = useState<DropFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [started, setStarted] = useState(false);
   const [reading, setReading] = useState(false);
+  const [jobCreating, setJobCreating] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const addFiles = async (fileList: FileList | File[]) => {
@@ -89,8 +105,8 @@ export function FileDropView() {
     setReading(true);
     const added: DropFile[] = [];
     for (const file of incoming) {
-      const records = await readFileRows(file);
-      added.push({ name: file.name, kind: detectKind(file.name), records });
+      const { content, records } = await readFileRows(file);
+      added.push({ name: file.name, kind: detectKind(file.name), sourceKind: detectSourceKind(file.name), records, content });
     }
     setFiles((prev) => {
       const merged = [...prev];
@@ -100,6 +116,17 @@ export function FileDropView() {
       return merged;
     });
     setReading(false);
+  };
+
+  const startMigration = () => {
+    setStarted(true);
+    setJobCreating(true);
+    void createMigrationJob(
+      files.map((f) => ({ kind: f.sourceKind, fileName: f.name, recordCount: f.records, content: f.content })),
+    ).then((created) => {
+      setJobId(created?.jobId ?? null);
+      setJobCreating(false);
+    });
   };
 
   const removeFile = (name: string) => {
@@ -225,7 +252,7 @@ export function FileDropView() {
           {files.length > 0 && !started && (
             <div className="flex items-center justify-center gap-3">
               <button
-                onClick={() => { setStarted(true); }}
+                onClick={startMigration}
                 className="inline-flex items-center gap-2 rounded-full bg-[#312d97] px-8 py-3 text-sm font-semibold text-white transition-all hover:bg-[#5149d7]"
               >
                 Start Migration
@@ -258,10 +285,11 @@ export function FileDropView() {
                 ))}
               </div>
               <button
-                onClick={() => router.push("/migrate/live")}
-                className="mt-8 inline-flex items-center gap-2 rounded-full bg-[#312d97] px-8 py-3 text-sm font-semibold text-white transition-all hover:bg-[#5149d7]"
+                onClick={() => router.push(jobId ? `/migrate/live?job=${jobId}` : "/migrate/live")}
+                disabled={jobCreating}
+                className="mt-8 inline-flex items-center gap-2 rounded-full bg-[#312d97] px-8 py-3 text-sm font-semibold text-white transition-all hover:bg-[#5149d7] disabled:opacity-60"
               >
-                Watch the pipeline run
+                {jobCreating ? "Preparing migration..." : "Watch the pipeline run"}
                 <span aria-hidden>{"->"}</span>
               </button>
             </div>

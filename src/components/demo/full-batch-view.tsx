@@ -17,7 +17,9 @@ import { SourceSystemsPanel } from "@/components/cockpit/source-systems-panel";
 import { PipelineActivityPanel } from "@/components/cockpit/pipeline-activity-panel";
 import { ExceptionQueuePanel } from "@/components/cockpit/exception-queue-panel";
 import { formatCount } from "@/components/ui/format";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { getJobExceptions, getMigrationJob } from "@/lib/api";
+import type { JobDetail, JobException } from "@/lib/api";
 import type {
   AgentStage,
   ConfidenceSummary,
@@ -25,6 +27,32 @@ import type {
   PipelineEvent,
   SourceSystemView,
 } from "@/components/cockpit/types";
+
+const TERMINAL_STATUSES = new Set(["completed", "failed"]);
+
+function realSources(job: JobDetail): SourceSystemView[] {
+  const done = TERMINAL_STATUSES.has(job.status);
+  return job.sourceFiles.map((f) => ({
+    id: f.id,
+    kind: f.kind,
+    fileName: f.fileName,
+    recordCount: f.recordCount,
+    status: done ? "parsed" : "parsing",
+    parseErrors: 0,
+  }));
+}
+
+function toQueueItem(e: JobException): ExceptionQueueItem {
+  return {
+    id: e.id,
+    type: e.type,
+    severity: e.severity,
+    summary: e.summary,
+    confidence: 0,
+    reviewStatus: e.reviewStatus,
+    suggestedFix: e.suggestedFix,
+  };
+}
 
 const TOTAL_TICKS = 40; // 40 * 600ms = 24s of visible fleet work
 
@@ -117,7 +145,42 @@ const COMPLETE_EXCEPTIONS: ExceptionQueueItem[] = [
 
 export function FullBatchView() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const jobId = searchParams.get("job");
   const [tick, setTick] = useState(0);
+  const [job, setJob] = useState<JobDetail | null>(null);
+  const [realExceptions, setRealExceptions] = useState<JobException[] | null>(null);
+
+  // Real job polling: while a real jobId is present, poll status every 1.5s
+  // until the pipeline reaches a terminal state, then fetch its exceptions.
+  // Falls back to the scripted tick animation if the API is unreachable.
+  useEffect(() => {
+    if (!jobId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const poll = async () => {
+      const latest = await getMigrationJob(jobId);
+      if (cancelled) return;
+      if (latest && TERMINAL_STATUSES.has(latest.status)) {
+        // Fetch exceptions before flipping to "complete" so the header
+        // count and exception list never show a stale/zero value.
+        const excs = await getJobExceptions(jobId);
+        if (cancelled) return;
+        setRealExceptions(excs);
+        setJob(latest);
+      } else {
+        if (latest) setJob(latest);
+        timer = setTimeout(poll, 1500);
+      }
+    };
+    void poll();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [jobId]);
 
   // Real timestamps: events fire at relative offsets from mount
   const [startTime] = useState(() => Date.now());
@@ -141,11 +204,17 @@ export function FullBatchView() {
   }, [tick]);
 
   const stages = buildFullStages(tick);
-  const complete = tick >= TOTAL_TICKS;
+  const hasRealJob = jobId !== null;
+  const complete = hasRealJob ? job !== null && TERMINAL_STATUSES.has(job.status) : tick >= TOTAL_TICKS;
 
-  // Show exceptions progressively
-  const exceptionCount = Math.round(1501 * Math.min(1, tick / TOTAL_TICKS));
-  const visibleExceptions: ExceptionQueueItem[] = COMPLETE_EXCEPTIONS.slice(0, Math.min(COMPLETE_EXCEPTIONS.length, Math.ceil(exceptionCount / 188)));
+  // Show exceptions progressively (scripted) or the real count once known.
+  const scriptedExceptionCount = Math.round(1501 * Math.min(1, tick / TOTAL_TICKS));
+  const exceptionCount = realExceptions ? realExceptions.length : scriptedExceptionCount;
+  const recordTotal = job ? job.sourceFiles.reduce((sum, f) => sum + f.recordCount, 0) : 150_000;
+  const sources = job ? realSources(job) : FULL_SOURCES;
+  const visibleExceptions: ExceptionQueueItem[] = realExceptions
+    ? realExceptions.slice(0, 8).map(toQueueItem)
+    : COMPLETE_EXCEPTIONS.slice(0, Math.min(COMPLETE_EXCEPTIONS.length, Math.ceil(scriptedExceptionCount / 188)));
 
   return (
     <div className="flex h-screen flex-col bg-white">
@@ -156,7 +225,7 @@ export function FullBatchView() {
           <div className="flex items-center gap-4">
             <div className="text-right">
               <span className="text-[9px] font-semibold uppercase tracking-widest text-white/50">Records</span>
-              <p className="font-mono text-xs tabular-nums text-white/90">{formatCount(150_000)}</p>
+              <p className="font-mono text-xs tabular-nums text-white/90">{formatCount(recordTotal)}</p>
             </div>
             <div className="text-right">
               <span className="text-[9px] font-semibold uppercase tracking-widest text-white/50">Exceptions</span>
@@ -164,7 +233,7 @@ export function FullBatchView() {
             </div>
             {complete && (
               <button
-                onClick={() => router.push("/migrate/review")}
+                onClick={() => router.push(jobId ? `/migrate/review?job=${jobId}` : "/migrate/review")}
                 className="inline-flex items-center gap-2 rounded-full bg-[#312d97] px-5 py-2 text-xs font-semibold text-white transition-all hover:bg-[#5149d7]"
               >
                 Review exceptions
@@ -176,7 +245,7 @@ export function FullBatchView() {
       />
 
       <div className="grid flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[260px_1fr_320px]">
-        <SourceSystemsPanel sources={FULL_SOURCES} />
+        <SourceSystemsPanel sources={sources} />
         <PipelineActivityPanel stages={stages} events={events} />
         <ExceptionQueuePanel exceptions={visibleExceptions} confidence={FULL_CONFIDENCE} />
       </div>

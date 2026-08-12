@@ -26,6 +26,8 @@ export const config = {
     seed: 20260812,
     /** Records animated in the live sample before the full batch. */
     liveSampleSize: 500,
+    /** Target migration timeline, in business days. A business SLA estimate, not a measured pipeline statistic. */
+    goLiveDaysTarget: 2,
     /** Exact record counts per entity type. Sum equals totalRecords. */
     counts: {
       customers: 45_000,

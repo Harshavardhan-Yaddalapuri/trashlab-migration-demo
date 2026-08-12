@@ -15,6 +15,7 @@ import {
   appendAuditBatch,
 } from "@/features/review";
 import type { BulkResolveRequest } from "@/features/review";
+import { hydrateExceptionStore, persistExceptionCard } from "@/server/exception-sync";
 
 export const runtime = "nodejs";
 
@@ -55,6 +56,8 @@ export async function POST(
     );
   }
 
+  await hydrateExceptionStore(jobId);
+
   const cards = getExceptionsForJob(jobId);
   if (cards.length === 0) {
     return NextResponse.json(
@@ -74,6 +77,10 @@ export async function POST(
 
   putExceptions(updatedCards);
   appendAuditBatch(auditEntries);
+  const resolvedIdSet = new Set(result.resolvedIds);
+  await Promise.all(
+    updatedCards.filter((card) => resolvedIdSet.has(card.id)).map((card) => persistExceptionCard(card)),
+  );
 
   return NextResponse.json({
     resolvedCount: result.resolvedCount,

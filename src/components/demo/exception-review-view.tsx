@@ -11,11 +11,16 @@
  * No em-dashes in user-facing text.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useDemoStore } from "@/components/demo/demo-store";
 import { CockpitHeader } from "@/components/cockpit/cockpit-header";
 import { formatCount } from "@/components/ui/format";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { approveException as apiApproveException, bulkResolveExceptions, getJobExceptions } from "@/lib/api";
+import type { JobException } from "@/lib/api";
+
+const REVIEWER_ACTOR = "demo-reviewer";
+const REVIEWER_ROLE = "admin" as const;
 
 interface FeaturedException {
   id: string;
@@ -128,15 +133,65 @@ const SEVERITY_STYLES: Record<string, { text: string; badge: string }> = {
 
 const TOTAL_AGGREGATED = AGGREGATED.reduce((sum, g) => sum + g.count, 0);
 
+/** Map a real persisted exception to the featured-card shape. */
+function toFeaturedException(e: JobException): FeaturedException {
+  return {
+    id: e.id,
+    type: e.type,
+    severity: e.severity,
+    summary: e.summary,
+    evidence: e.evidence,
+    suggestedFix: e.suggestedFix,
+    confidence: e.confidence,
+  };
+}
+
+/** Group the remainder of a job's real exceptions by type, like the scripted AGGREGATED list. */
+function groupAggregated(items: JobException[]): AggregatedGroup[] {
+  const byType = new Map<string, JobException[]>();
+  for (const e of items) {
+    const list = byType.get(e.type) ?? [];
+    list.push(e);
+    byType.set(e.type, list);
+  }
+  return Array.from(byType.entries()).map(([type, list]) => ({
+    type,
+    count: list.length,
+    severity: list[0].severity,
+    sample: list.slice(0, 3).map((e) => e.summary),
+  }));
+}
+
 export function ExceptionReviewView() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const jobId = searchParams.get("job");
   const [resolved, setResolved] = useState<Set<string>>(new Set());
   const [bulkResolved, setBulkResolved] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState<string | null>(null);
   const [drillDown, setDrillDown] = useState<AggregatedGroup | null>(null);
+  const [realExceptions, setRealExceptions] = useState<JobException[] | null>(null);
 
-  const allFeaturedResolved = resolved.size === FEATURED.length;
+  // Real exceptions: fetched once when a real jobId is present. Falls back
+  // to the scripted FEATURED/AGGREGATED lists if the API is unreachable or
+  // there is no real job.
+  useEffect(() => {
+    if (!jobId) return;
+    let cancelled = false;
+    void getJobExceptions(jobId).then((list) => {
+      if (!cancelled) setRealExceptions(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId]);
+
+  const featured = realExceptions ? realExceptions.slice(0, 8).map(toFeaturedException) : FEATURED;
+  const aggregated = realExceptions ? groupAggregated(realExceptions.slice(8)) : AGGREGATED;
+  const totalAggregated = realExceptions ? aggregated.reduce((sum, g) => sum + g.count, 0) : TOTAL_AGGREGATED;
+
+  const allFeaturedResolved = resolved.size === featured.length;
   const allDone = allFeaturedResolved && bulkResolved;
 
   const toggleExpand = (id: string) => {
@@ -151,6 +206,22 @@ export function ExceptionReviewView() {
   const resolve = (id: string) => {
     setResolved((prev) => new Set([...prev, id]));
     setConfirming(null);
+    if (jobId) void apiApproveException(jobId, id, REVIEWER_ACTOR, REVIEWER_ROLE);
+  };
+
+  const resolveType = (type: string) => {
+    setBulkResolved(true);
+    setDrillDown(null);
+    if (jobId) void bulkResolveExceptions(jobId, type, REVIEWER_ACTOR, REVIEWER_ROLE, "Resolved from demo review");
+  };
+
+  const bulkResolveAll = () => {
+    setBulkResolved(true);
+    if (jobId) {
+      for (const group of aggregated) {
+        void bulkResolveExceptions(jobId, group.type, REVIEWER_ACTOR, REVIEWER_ROLE, "Bulk resolved from demo review");
+      }
+    }
   };
 
   return (
@@ -162,15 +233,15 @@ export function ExceptionReviewView() {
           <div className="flex items-center gap-4">
             <div className="text-right">
               <span className="text-[9px] font-semibold uppercase tracking-widest text-white/50">Featured</span>
-              <p className="font-mono text-xs tabular-nums text-white/90">{resolved.size}/{FEATURED.length}</p>
+              <p className="font-mono text-xs tabular-nums text-white/90">{resolved.size}/{featured.length}</p>
             </div>
             <div className="text-right">
               <span className="text-[9px] font-semibold uppercase tracking-widest text-white/50">Aggregated</span>
-              <p className="font-mono text-xs tabular-nums text-white/90">{bulkResolved ? "0" : formatCount(TOTAL_AGGREGATED)}</p>
+              <p className="font-mono text-xs tabular-nums text-white/90">{bulkResolved ? "0" : formatCount(totalAggregated)}</p>
             </div>
             {allDone && (
               <button
-                onClick={() => router.push("/migrate/report")}
+                onClick={() => router.push(jobId ? `/migrate/report?job=${jobId}` : "/migrate/report")}
                 className="inline-flex items-center gap-2 rounded-full bg-[#10b981] px-5 py-2 text-xs font-semibold text-white transition-all hover:bg-[#0d9a6c]"
               >
                 View Report
@@ -186,10 +257,10 @@ export function ExceptionReviewView() {
           {/* Featured exceptions */}
           <div className="mb-8">
             <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6260af]">
-              Featured Exceptions ({FEATURED.length})
+              Featured Exceptions ({featured.length})
             </h2>
             <div className="space-y-4">
-              {FEATURED.map((exc) => {
+              {featured.map((exc) => {
                 const isResolved = resolved.has(exc.id);
                 const isExpanded = expanded.has(exc.id);
                 const isConfirming = confirming === exc.id;
@@ -281,11 +352,11 @@ export function ExceptionReviewView() {
           <div>
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6260af]">
-                Aggregated by Type ({formatCount(TOTAL_AGGREGATED)})
+                Aggregated by Type ({formatCount(totalAggregated)})
               </h2>
               {!bulkResolved && allFeaturedResolved && (
                 <button
-                  onClick={() => setBulkResolved(true)}
+                  onClick={bulkResolveAll}
                   className="rounded-full border border-[#10b981]/40 bg-[#10b981]/10 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#10b981] transition-all hover:bg-[#10b981]/20"
                 >
                   Bulk Resolve All
@@ -302,7 +373,7 @@ export function ExceptionReviewView() {
                   </tr>
                 </thead>
                 <tbody>
-                  {AGGREGATED.map((group) => {
+                  {aggregated.map((group) => {
                     const sev = SEVERITY_STYLES[group.severity];
                     return (
                       <tr
@@ -378,7 +449,7 @@ export function ExceptionReviewView() {
               </button>
               {!bulkResolved && (
                 <button
-                  onClick={() => { setBulkResolved(true); setDrillDown(null); }}
+                  onClick={() => resolveType(drillDown.type)}
                   className="rounded-full bg-[#312d97] px-5 py-2 text-xs font-semibold text-white transition-all hover:bg-[#5149d7]"
                 >
                   Resolve this type

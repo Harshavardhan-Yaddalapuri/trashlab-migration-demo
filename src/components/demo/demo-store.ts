@@ -50,10 +50,14 @@ export function phaseFromPath(pathname: string): DemoPhase {
 interface DemoState {
   phase: DemoPhase;
   isRunning: boolean;
+  /** The real migration job created from uploaded files, if the API is reachable. */
+  jobId: string | null;
   /** Set the phase from the current URL (called by the router-driven shell). */
   syncFromPath: (pathname: string) => void;
   /** Mark the demo as running (used by the landing CTA before navigation). */
   markRunning: () => void;
+  /** Store the real job ID returned by the migration-jobs API. */
+  setJobId: (jobId: string | null) => void;
   /** Reset back to the landing page. */
   reset: () => void;
 }
@@ -61,8 +65,10 @@ interface DemoState {
 export const useDemoStore = create<DemoState>((set) => ({
   phase: "landing",
   isRunning: false,
+  jobId: null,
   syncFromPath: (pathname) =>
     set({ phase: phaseFromPath(pathname), isRunning: phaseFromPath(pathname) !== "landing" }),
   markRunning: () => set({ isRunning: true }),
-  reset: () => set({ phase: "landing", isRunning: false }),
+  setJobId: (jobId) => set({ jobId }),
+  reset: () => set({ phase: "landing", isRunning: false, jobId: null }),
 }));

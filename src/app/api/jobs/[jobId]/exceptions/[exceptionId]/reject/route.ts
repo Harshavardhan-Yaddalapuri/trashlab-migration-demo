@@ -16,6 +16,7 @@ import {
   appendAudit,
 } from "@/features/review";
 import type { RejectRequest } from "@/features/review";
+import { hydrateExceptionStore, persistExceptionCard } from "@/server/exception-sync";
 
 export const runtime = "nodejs";
 
@@ -42,6 +43,8 @@ export async function POST(
     );
   }
 
+  await hydrateExceptionStore(jobId);
+
   const card = getException(jobId, exceptionId);
   if (!card) {
     return NextResponse.json(
@@ -66,6 +69,7 @@ export async function POST(
 
   updateException(updatedCard);
   appendAudit(audit);
+  await persistExceptionCard(updatedCard);
 
   return NextResponse.json({
     exception: {

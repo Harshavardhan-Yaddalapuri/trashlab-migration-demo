@@ -1,0 +1,196 @@
+/**
+ * Runs the real LangGraph migration pipeline for a job and persists its
+ * output to Postgres. Server-side only.
+ *
+ * The pipeline generates its own deterministic, prefix-chained string ids
+ * at each stage (raw -> "n-<rawId>" -> "e-<normalizedId>"/clusterId ->
+ * "p-<resolvedId>" -> "exc-*"). Exceptions carry that lineage in their own
+ * id ("exc-map-<resolvedEntityId>", "exc-<clusterId>"), which is how we
+ * trace an exception back to the entity that raised it without touching
+ * pipeline logic.
+ */
+
+import { eq } from "drizzle-orm";
+import { buildMigrationGraph, initialState } from "@/pipeline/graph";
+import type { ExceptionIssue, MigrationStatus, ResolvedEntity, SourceFile } from "@/lib/types";
+import { db } from "@/server/db/client";
+import {
+  auditEvents,
+  exceptions,
+  migrationJobs,
+  normalizedRecords,
+  proposals,
+  rawRecords,
+  resolvedEntities,
+} from "@/server/db/schema";
+
+const INSERT_BATCH_SIZE = 1000;
+
+async function insertInBatches<T extends Record<string, unknown>>(
+  table: Parameters<typeof db.insert>[0],
+  rows: T[],
+): Promise<void> {
+  for (let i = 0; i < rows.length; i += INSERT_BATCH_SIZE) {
+    const chunk = rows.slice(i, i + INSERT_BATCH_SIZE);
+    if (chunk.length > 0) {
+      await db.insert(table).values(chunk);
+    }
+  }
+}
+
+/**
+ * Every exception-raising path in the pipeline puts the resolved entity id
+ * either as evidence[0] (validator, mapper) or embedded in the exception id
+ * itself (entity resolver: "exc-<clusterId>"). Checking candidates against
+ * the actual resolved-entity id set (rather than trusting string shape)
+ * keeps this correct even if an agent's id convention changes.
+ */
+function inferResolvedEntityId(exception: ExceptionIssue, resolvedIds: Set<string>): string | null {
+  const evidenceCandidate = exception.evidence[0];
+  if (evidenceCandidate !== undefined && resolvedIds.has(evidenceCandidate)) {
+    return evidenceCandidate;
+  }
+  if (exception.id.startsWith("exc-map-")) {
+    const candidate = exception.id.slice("exc-map-".length);
+    if (resolvedIds.has(candidate)) return candidate;
+  }
+  if (exception.id.startsWith("exc-")) {
+    const candidate = exception.id.slice("exc-".length);
+    if (resolvedIds.has(candidate)) return candidate;
+  }
+  return null;
+}
+
+export interface PipelineRunResult {
+  status: MigrationStatus;
+  progress: number;
+  rawRecordCount: number;
+  proposalCount: number;
+  exceptionCount: number;
+}
+
+export async function runPipelineForJob(jobId: string, sourceFiles: SourceFile[]): Promise<PipelineRunResult> {
+  const graph = buildMigrationGraph();
+  const state = initialState(jobId, sourceFiles);
+
+  let final;
+  try {
+    final = await graph.invoke(state, { configurable: { thread_id: jobId } });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await db
+      .update(migrationJobs)
+      .set({ status: "failed", error: message, updatedAt: new Date() })
+      .where(eq(migrationJobs.id, jobId));
+    throw err;
+  }
+
+  const resolvedById = new Map<string, ResolvedEntity>(final.resolved.map((r) => [r.id, r]));
+
+  await insertInBatches(
+    rawRecords,
+    final.rawRecords.map((r) => ({
+      id: r.id,
+      jobId,
+      sourceFileId: r.sourceFileId,
+      sourceRow: r.sourceRow,
+      payload: r.payload,
+      rawHash: r.rawHash,
+    })),
+  );
+
+  await insertInBatches(
+    normalizedRecords,
+    final.normalized.map((n) => ({
+      id: n.id,
+      jobId,
+      rawRecordId: n.rawRecordId,
+      entityType: n.entityType,
+      fields: n.fields,
+      normalizedAt: new Date(n.normalizedAt),
+    })),
+  );
+
+  await insertInBatches(
+    resolvedEntities,
+    final.resolved.map((r) => ({
+      id: r.id,
+      jobId,
+      entityType: r.entityType,
+      clusterId: r.clusterId,
+      confidence: r.confidence,
+      merged: r.merged,
+      canonicalFields: r.canonicalFields,
+    })),
+  );
+
+  await insertInBatches(
+    proposals,
+    final.proposals.map((p) => ({
+      id: p.id,
+      jobId,
+      resolvedEntityId: p.resolvedEntityId,
+      entityType: resolvedById.get(p.resolvedEntityId)?.entityType ?? "unknown",
+      targetTable: p.targetTable,
+      targetId: p.targetId,
+      confidence: p.confidence,
+      ruleVersion: p.ruleVersion,
+      status: p.status,
+      mappedFields: p.mappedFields ?? null,
+    })),
+  );
+
+  const resolvedIds = new Set(resolvedById.keys());
+  await insertInBatches(
+    exceptions,
+    final.exceptions.map((e) => {
+      const resolvedEntityId = inferResolvedEntityId(e, resolvedIds);
+      const entity = resolvedEntityId ? resolvedById.get(resolvedEntityId) : undefined;
+      return {
+        id: e.id,
+        jobId,
+        type: e.type,
+        severity: e.severity,
+        summary: e.summary,
+        evidence: e.evidence,
+        suggestedFix: e.suggestedFix,
+        reviewStatus: e.reviewStatus,
+        resolvedEntityId,
+        confidence: entity?.confidence ?? 0,
+        sourceRecord: resolvedEntityId ?? "unknown",
+        createdAt: new Date(e.createdAt),
+        resolvedAt: e.resolvedAt ? new Date(e.resolvedAt) : null,
+      };
+    }),
+  );
+
+  await insertInBatches(
+    auditEvents,
+    final.audit.map((a) => ({
+      id: a.id,
+      jobId,
+      type: a.type,
+      actor: a.actor,
+      payload: a.payload,
+      at: new Date(a.at),
+    })),
+  );
+
+  await db
+    .update(migrationJobs)
+    .set({
+      status: final.status,
+      progress: Math.round(final.progress * 100),
+      error: final.error ?? null,
+      updatedAt: new Date(),
+    })
+    .where(eq(migrationJobs.id, jobId));
+
+  return {
+    status: final.status,
+    progress: final.progress,
+    rawRecordCount: final.rawRecords.length,
+    proposalCount: final.proposals.length,
+    exceptionCount: final.exceptions.length,
+  };
+}

@@ -14,11 +14,34 @@
  * No em-dashes in user-facing text.
  */
 
+import { useEffect, useState } from "react";
 import { useDemoStore } from "@/components/demo/demo-store";
 import { CockpitHeader } from "@/components/cockpit/cockpit-header";
 import { formatCount, formatPercent } from "@/components/ui/format";
 import { config } from "@/lib/config";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { getJobReport } from "@/lib/api";
+import type { JobReport } from "@/lib/api";
+
+const SOURCE_LABELS: Record<string, string> = {
+  "routepro-csv": "RoutePro CSV",
+  "quickbooks-export": "QuickBooks",
+  "transfer-spreadsheet": "Transfer Station",
+  "legacy-export": "Legacy Export",
+};
+
+const ENTITY_LABELS: Record<string, string> = {
+  customer: "Customers",
+  site: "Sites",
+  container: "Containers",
+  agreement: "Agreements",
+  route: "Routes",
+  ticket: "Scale Tickets",
+};
+
+function confidenceBand(histogram: JobReport["confidenceHistogram"], from: number, to: number): number {
+  return histogram.slice(from, to).reduce((sum, b) => sum + b.count, 0);
+}
 
 /** Histogram data matching the full batch. */
 const HISTOGRAM = [
@@ -74,10 +97,64 @@ const AUDIT_EVENTS = [
 
 export function ReportView() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const jobId = searchParams.get("job");
   const reset = useDemoStore((s) => s.reset);
-  const totalRecords = config.demo.totalRecords;
-  const autoMapped = 148_800;
-  const exceptions = 1_200;
+  const [realReport, setRealReport] = useState<JobReport | null>(null);
+
+  // Real report: fetched once when a real jobId is present. Falls back to
+  // the scripted demo numbers if the API is unreachable or there is no
+  // real job.
+  useEffect(() => {
+    if (!jobId) return;
+    let cancelled = false;
+    void getJobReport(jobId).then((r) => {
+      if (!cancelled) setRealReport(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [jobId]);
+
+  const totalRecords = realReport ? realReport.totalRecords : config.demo.totalRecords;
+  const autoMapped = realReport ? realReport.autoMapped : 148_800;
+  const exceptions = realReport ? realReport.exceptionCount : 1_200;
+  const autoMapRate = realReport ? realReport.autoMapRate : 0.992;
+  const silentErrors = realReport ? realReport.silentErrors : 0;
+  const goLiveDays = realReport ? realReport.goLiveDays : 2;
+
+  const histogram = realReport
+    ? realReport.confidenceHistogram.map((b, i) => ({ lower: i * 0.1, count: b.count }))
+    : HISTOGRAM;
+  const highConfidence = realReport ? confidenceBand(realReport.confidenceHistogram, 9, 10) : 136_500;
+  const mediumConfidence = realReport ? confidenceBand(realReport.confidenceHistogram, 7, 9) : 11_800;
+  const lowConfidence = realReport ? confidenceBand(realReport.confidenceHistogram, 0, 7) : 1_700;
+  const meanConfidence = realReport
+    ? (() => {
+        const total = realReport.confidenceHistogram.reduce((sum, b) => sum + b.count, 0);
+        if (total === 0) return 0;
+        const weighted = realReport.confidenceHistogram.reduce((sum, b, i) => sum + (i * 0.1 + 0.05) * b.count, 0);
+        return weighted / total;
+      })()
+    : 0.94;
+
+  const sourceBreakdown = realReport
+    ? realReport.bySource.map((s) => ({
+        source: SOURCE_LABELS[s.source] ?? s.source,
+        total: s.totalRecords,
+        autoMapped: s.autoMapped,
+        exceptions: s.exceptions,
+      }))
+    : SOURCE_BREAKDOWN;
+  const entityBreakdown = realReport
+    ? realReport.byEntity.map((e) => ({
+        type: ENTITY_LABELS[e.entityType] ?? e.entityType,
+        total: e.totalRecords,
+        autoMapped: e.autoMapped,
+        exceptions: e.exceptions,
+        confidence: e.avgConfidence,
+      }))
+    : ENTITY_BREAKDOWN;
 
   const runAgain = () => {
     reset();
@@ -106,17 +183,17 @@ export function ReportView() {
           <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
             <div className="rounded-2xl border border-[#e0deff] bg-[#f7f7ff] px-6 py-5">
               <p className="text-[10px] font-semibold uppercase tracking-widest text-[#6260af]">Go-Live</p>
-              <p className="mt-1 text-3xl font-extrabold tabular-nums text-[#10b981]">2</p>
+              <p className="mt-1 text-3xl font-extrabold tabular-nums text-[#10b981]">{goLiveDays}</p>
               <p className="text-[10px] font-medium text-[#6260af]">days</p>
             </div>
             <div className="rounded-2xl border border-[#e0deff] bg-[#f7f7ff] px-6 py-5">
               <p className="text-[10px] font-semibold uppercase tracking-widest text-[#6260af]">Auto-Mapped</p>
-              <p className="mt-1 text-3xl font-extrabold tabular-nums text-[#10b981]">99.2%</p>
+              <p className="mt-1 text-3xl font-extrabold tabular-nums text-[#10b981]">{formatPercent(autoMapRate)}</p>
               <p className="text-[10px] font-medium text-[#6260af]">{formatCount(autoMapped)} of {formatCount(totalRecords)}</p>
             </div>
             <div className="rounded-2xl border border-[#e0deff] bg-[#f7f7ff] px-6 py-5">
               <p className="text-[10px] font-semibold uppercase tracking-widest text-[#6260af]">Silent Errors</p>
-              <p className="mt-1 text-3xl font-extrabold tabular-nums text-[#1a174f]">0</p>
+              <p className="mt-1 text-3xl font-extrabold tabular-nums text-[#1a174f]">{silentErrors}</p>
               <p className="text-[10px] font-medium text-[#6260af]">detected by eval gate</p>
             </div>
             <div className="rounded-2xl border border-[#e0deff] bg-[#f7f7ff] px-6 py-5">
@@ -133,8 +210,8 @@ export function ReportView() {
             </h2>
             <div className="rounded-2xl border border-[#e0deff] bg-[#f7f7ff] p-6">
               <div className="flex items-end gap-1 h-32">
-                {HISTOGRAM.map((bucket, i) => {
-                  const maxCount = Math.max(...HISTOGRAM.map((b) => b.count));
+                {histogram.map((bucket, i) => {
+                  const maxCount = Math.max(...histogram.map((b) => b.count));
                   const heightPct = maxCount > 0 ? (bucket.count / maxCount) * 100 : 0;
                   return (
                     <div key={i} className="flex flex-1 flex-col items-center gap-1">
@@ -156,20 +233,20 @@ export function ReportView() {
                 <div className="flex gap-6">
                   <div>
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-[#6260af]">High (0.9+)</span>
-                    <p className="font-mono text-sm tabular-nums text-[#10b981]">{formatCount(136_500)}</p>
+                    <p className="font-mono text-sm tabular-nums text-[#10b981]">{formatCount(highConfidence)}</p>
                   </div>
                   <div>
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-[#6260af]">Medium (0.7-0.9)</span>
-                    <p className="font-mono text-sm tabular-nums text-amber-600">{formatCount(11_800)}</p>
+                    <p className="font-mono text-sm tabular-nums text-amber-600">{formatCount(mediumConfidence)}</p>
                   </div>
                   <div>
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-[#6260af]">Low (0.0-0.7)</span>
-                    <p className="font-mono text-sm tabular-nums text-red-500">{formatCount(1_700)}</p>
+                    <p className="font-mono text-sm tabular-nums text-red-500">{formatCount(lowConfidence)}</p>
                   </div>
                 </div>
                 <div>
                   <span className="text-[10px] font-semibold uppercase tracking-wider text-[#6260af]">Mean</span>
-                  <p className="font-mono text-sm tabular-nums text-slate-800">0.94</p>
+                  <p className="font-mono text-sm tabular-nums text-slate-800">{meanConfidence.toFixed(2)}</p>
                 </div>
               </div>
             </div>
@@ -194,13 +271,13 @@ export function ReportView() {
                     </tr>
                   </thead>
                   <tbody>
-                    {SOURCE_BREAKDOWN.map((s) => (
+                    {sourceBreakdown.map((s) => (
                       <tr key={s.source} className="border-b border-[#e0deff] last:border-0">
                         <td className="px-3 py-2.5 text-xs text-slate-700">{s.source}</td>
                         <td className="px-3 py-2.5 text-right font-mono text-xs tabular-nums text-slate-600">{formatCount(s.total)}</td>
                         <td className="px-3 py-2.5 text-right font-mono text-xs tabular-nums text-[#10b981]">{formatCount(s.autoMapped)}</td>
                         <td className="px-3 py-2.5 text-right font-mono text-xs tabular-nums text-amber-600">{formatCount(s.exceptions)}</td>
-                        <td className="px-3 py-2.5 text-right font-mono text-xs tabular-nums text-slate-600">{formatPercent(s.autoMapped / s.total)}</td>
+                        <td className="px-3 py-2.5 text-right font-mono text-xs tabular-nums text-slate-600">{formatPercent(s.total === 0 ? 0 : s.autoMapped / s.total)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -225,7 +302,7 @@ export function ReportView() {
                     </tr>
                   </thead>
                   <tbody>
-                    {ENTITY_BREAKDOWN.map((e) => (
+                    {entityBreakdown.map((e) => (
                       <tr key={e.type} className="border-b border-[#e0deff] last:border-0">
                         <td className="px-3 py-2.5 text-xs text-slate-700">{e.type}</td>
                         <td className="px-3 py-2.5 text-right font-mono text-xs tabular-nums text-slate-600">{formatCount(e.total)}</td>

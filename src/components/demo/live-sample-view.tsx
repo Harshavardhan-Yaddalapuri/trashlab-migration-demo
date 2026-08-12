@@ -16,7 +16,9 @@ import { SourceSystemsPanel } from "@/components/cockpit/source-systems-panel";
 import { PipelineActivityPanel } from "@/components/cockpit/pipeline-activity-panel";
 import { ExceptionQueuePanel } from "@/components/cockpit/exception-queue-panel";
 import { formatCount } from "@/components/ui/format";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { getMigrationJob } from "@/lib/api";
+import type { JobDetail } from "@/lib/api";
 import type {
   AgentStage,
   ConfidenceSummary,
@@ -24,6 +26,21 @@ import type {
   PipelineEvent,
   SourceSystemView,
 } from "@/components/cockpit/types";
+
+const TERMINAL_STATUSES = new Set(["completed", "failed"]);
+
+/** Map a real job's source files to the source-systems panel view model. */
+function realSources(job: JobDetail): SourceSystemView[] {
+  const done = TERMINAL_STATUSES.has(job.status);
+  return job.sourceFiles.map((f) => ({
+    id: f.id,
+    kind: f.kind,
+    fileName: f.fileName,
+    recordCount: f.recordCount,
+    status: done ? "parsed" : "parsing",
+    parseErrors: 0,
+  }));
+}
 
 /** Stages for live sample (500 rows flowing). */
 function buildSampleStages(tick: number): AgentStage[] {
@@ -100,7 +117,10 @@ const SAMPLE_CONFIDENCE: ConfidenceSummary = {
 
 export function LiveSampleView() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const jobId = searchParams.get("job");
   const [tick, setTick] = useState(0);
+  const [job, setJob] = useState<JobDetail | null>(null);
 
   useEffect(() => {
     if (tick >= 20) return;
@@ -108,8 +128,35 @@ export function LiveSampleView() {
     return () => clearTimeout(timer);
   }, [tick]);
 
+  // Real job polling: while a real jobId is present, poll status every 1.5s
+  // until the pipeline reaches a terminal state. Falls back to the scripted
+  // tick animation if the API is unreachable or no jobId was created.
+  useEffect(() => {
+    if (!jobId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const poll = async () => {
+      const latest = await getMigrationJob(jobId);
+      if (cancelled) return;
+      if (latest) setJob(latest);
+      if (!latest || !TERMINAL_STATUSES.has(latest.status)) {
+        timer = setTimeout(poll, 1500);
+      }
+    };
+    void poll();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [jobId]);
+
   const stages = buildSampleStages(tick);
-  const complete = tick >= 20;
+  const hasRealJob = jobId !== null;
+  const complete = hasRealJob ? job !== null && TERMINAL_STATUSES.has(job.status) : tick >= 20;
+  const recordTotal = job ? job.sourceFiles.reduce((sum, f) => sum + f.recordCount, 0) : 500;
+  const sources = job ? realSources(job) : SAMPLE_SOURCES;
 
   return (
     <div className="flex h-screen flex-col bg-white">
@@ -120,11 +167,11 @@ export function LiveSampleView() {
           <div className="flex items-center gap-4">
             <div className="text-right">
               <span className="text-[9px] font-semibold uppercase tracking-widest text-white/50">Records</span>
-              <p className="font-mono text-xs tabular-nums text-white/90">{formatCount(500)}</p>
+              <p className="font-mono text-xs tabular-nums text-white/90">{formatCount(recordTotal)}</p>
             </div>
             {complete && (
               <button
-                onClick={() => router.push("/migrate/batch")}
+                onClick={() => router.push(jobId ? `/migrate/batch?job=${jobId}` : "/migrate/batch")}
                 className="inline-flex items-center gap-2 rounded-full bg-[#10b981] px-5 py-2 text-xs font-semibold text-white transition-all hover:bg-[#0d9a6c]"
               >
                 Run full 150k batch
@@ -136,7 +183,7 @@ export function LiveSampleView() {
       />
 
       <div className="grid flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[260px_1fr_320px]">
-        <SourceSystemsPanel sources={SAMPLE_SOURCES} />
+        <SourceSystemsPanel sources={sources} />
         <PipelineActivityPanel stages={stages} events={SAMPLE_EVENTS} />
         <ExceptionQueuePanel exceptions={SAMPLE_EXCEPTIONS} confidence={SAMPLE_CONFIDENCE} />
       </div>
