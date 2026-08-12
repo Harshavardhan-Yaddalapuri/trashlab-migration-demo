@@ -4,6 +4,8 @@
  * File-drop view. A REAL interactive drop zone:
  * - Empty state with click-to-upload and drag-drop
  * - Files appear as cards with remove buttons
+ * - Record counts are REAL: the file content is read in the browser
+ *   and rows are counted (header excluded, comments skipped)
  * - "Start Migration" enables only when files are present
  * - Fleet activation strip after start
  *
@@ -22,24 +24,82 @@ interface DropFile {
   records: number;
 }
 
-const SAMPLE_FILES: DropFile[] = [
-  { name: "routepro_2019_export.csv", kind: "RoutePro CSV", records: 78_000 },
-  { name: "quickbooks_customer_export.tsv", kind: "QuickBooks", records: 45_000 },
-  { name: "transfer_station_weights.xlsx", kind: "Transfer Station", records: 20_000 },
-  { name: "legacy_paper_export.tab", kind: "Legacy Export", records: 7_000 },
-];
-
 const AGENTS = ["Orchestrator", "Intake", "Normalizer", "Resolver", "Mapper", "Validator", "Trainer", "Eval"];
+
+/** Detect the source kind from the filename. */
+function detectKind(name: string): string {
+  const lower = name.toLowerCase();
+  if (lower.includes("routepro") || lower.endsWith(".csv")) return "RoutePro CSV";
+  if (lower.includes("quickbooks") || lower.includes("qb")) return "QuickBooks";
+  if (lower.includes("transfer") || lower.includes("scale") || lower.includes("weigh")) return "Transfer Station";
+  if (lower.includes("legacy") || lower.includes("paper")) return "Legacy Export";
+  return "Source Export";
+}
+
+/** Count real data rows in a file's text content. */
+function countRows(content: string, name: string): number {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const lower = name.toLowerCase();
+  let count = 0;
+  let seenHeader = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed === "") continue;
+    // Transfer-station format: comment lines start with #
+    if (trimmed.startsWith("#")) continue;
+    // QuickBooks export: skip footer summary rows
+    if (/^total\b/i.test(trimmed) || /^report\b/i.test(trimmed)) continue;
+    // Legacy export: first line is a column key map (acts as the header)
+    if (lower.includes("legacy") && /^NAME\/SERVICE/i.test(trimmed)) continue;
+    // First non-comment line is the header row (CSV/TSV/transfer only;
+    // legacy already consumed its key line above)
+    if (!lower.includes("legacy") && !seenHeader) {
+      seenHeader = true;
+      continue;
+    }
+    count += 1;
+  }
+  return count;
+}
+
+/** Read a File's text content and resolve with the row count. */
+function readFileRows(file: File): Promise<number> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const content = String(reader.result ?? "");
+      resolve(countRows(content, file.name));
+    };
+    reader.onerror = () => resolve(0);
+    reader.readAsText(file);
+  });
+}
 
 export function FileDropView() {
   const router = useRouter();
   const [files, setFiles] = useState<DropFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [started, setStarted] = useState(false);
+  const [reading, setReading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const addFile = (file: DropFile) => {
-    setFiles((prev) => (prev.some((f) => f.name === file.name) ? prev : [...prev, file]));
+  const addFiles = async (fileList: FileList | File[]) => {
+    const incoming = Array.from(fileList);
+    if (incoming.length === 0) return;
+    setReading(true);
+    const added: DropFile[] = [];
+    for (const file of incoming) {
+      const records = await readFileRows(file);
+      added.push({ name: file.name, kind: detectKind(file.name), records });
+    }
+    setFiles((prev) => {
+      const merged = [...prev];
+      for (const f of added) {
+        if (!merged.some((m) => m.name === f.name)) merged.push(f);
+      }
+      return merged;
+    });
+    setReading(false);
   };
 
   const removeFile = (name: string) => {
@@ -49,21 +109,7 @@ export function FileDropView() {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    // Simulate: any dropped file becomes a recognized source (demo uses the 4 known sources)
-    const dropped = e.dataTransfer.files;
-    if (dropped.length > 0) {
-      // Map dropped filenames to known sources when they match, else generic
-      const names = Array.from(dropped).map((f) => f.name.toLowerCase());
-      SAMPLE_FILES.forEach((sf) => {
-        if (names.some((n) => sf.name.toLowerCase().includes(n.split("_")[0]) || n === sf.name.toLowerCase())) {
-          addFile(sf);
-        }
-      });
-      // If nothing matched, add the first sample file so the demo can proceed
-      if (files.length === 0) {
-        addFile(SAMPLE_FILES[0]);
-      }
-    }
+    void addFiles(e.dataTransfer.files);
   };
 
   const totalRecords = files.reduce((sum, f) => sum + f.records, 0);
@@ -85,7 +131,7 @@ export function FileDropView() {
         <div className="flex items-center gap-2">
           <span className={`h-2 w-2 rounded-full ${started ? "bg-[#10b981] cockpit-pulse" : "bg-white/30"}`} aria-hidden />
           <span className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
-            {started ? "fleet active" : "ready"}
+            {started ? "fleet active" : reading ? "reading files" : "ready"}
           </span>
         </div>
       </header>
@@ -113,18 +159,8 @@ export function FileDropView() {
               multiple
               className="hidden"
               onChange={(e) => {
-                const dropped = e.target.files;
-                if (dropped && dropped.length > 0) {
-                  const names = Array.from(dropped).map((f) => f.name.toLowerCase());
-                  SAMPLE_FILES.forEach((sf) => {
-                    if (names.some((n) => n === sf.name.toLowerCase() || n.includes(sf.name.split("_")[0]))) {
-                      addFile(sf);
-                    }
-                  });
-                  if (files.length === 0) {
-                    addFile(SAMPLE_FILES[0]);
-                  }
-                }
+                if (e.target.files) void addFiles(e.target.files);
+                e.target.value = "";
               }}
             />
             {files.length === 0 ? (
@@ -156,7 +192,7 @@ export function FileDropView() {
                           {file.kind}
                         </span>
                         <span className="font-mono text-xs tabular-nums text-slate-600">
-                          {formatCount(file.records)}
+                          {formatCount(file.records)} rows
                         </span>
                         <button
                           onClick={(e) => { e.stopPropagation(); removeFile(file.name); }}
