@@ -16,15 +16,16 @@
 import { useRef, useState } from "react";
 import { formatCount } from "@/components/ui/format";
 import { useRouter } from "next/navigation";
+import { upload } from "@vercel/blob/client";
 import { createMigrationJob } from "@/lib/api";
 import type { SourceKind } from "@/lib/types";
 
 interface DropFile {
+  file: File;
   name: string;
   kind: string;
   sourceKind: SourceKind;
   records: number;
-  content: string;
 }
 
 /** Detect the source kind from the filename. */
@@ -72,15 +73,14 @@ function countRows(content: string, name: string): number {
   return count;
 }
 
-/** Read a File's text content and resolve with the content + row count. */
-function readFileRows(file: File): Promise<{ content: string; records: number }> {
+/** Read a File's text content and resolve with the real row count. */
+function readFileRows(file: File): Promise<number> {
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = () => {
-      const content = String(reader.result ?? "");
-      resolve({ content, records: countRows(content, file.name) });
+      resolve(countRows(String(reader.result ?? ""), file.name));
     };
-    reader.onerror = () => resolve({ content: "", records: 0 });
+    reader.onerror = () => resolve(0);
     reader.readAsText(file);
   });
 }
@@ -100,8 +100,8 @@ export function FileDropView() {
     setReading(true);
     const added: DropFile[] = [];
     for (const file of incoming) {
-      const { content, records } = await readFileRows(file);
-      added.push({ name: file.name, kind: detectKind(file.name), sourceKind: detectSourceKind(file.name), records, content });
+      const records = await readFileRows(file);
+      added.push({ file, name: file.name, kind: detectKind(file.name), sourceKind: detectSourceKind(file.name), records });
     }
     setFiles((prev) => {
       const merged = [...prev];
@@ -116,15 +116,30 @@ export function FileDropView() {
   const startMigration = async () => {
     setStarting(true);
     setStartError(false);
-    const created = await createMigrationJob(
-      files.map((f) => ({ kind: f.sourceKind, fileName: f.name, recordCount: f.records, content: f.content })),
-    );
-    if (created) {
-      router.push(`/migrate/processing?job=${created.jobId}`);
-    } else {
-      setStarting(false);
-      setStartError(true);
+    try {
+      // Files go straight to Blob storage from the browser: a serverless
+      // function request body caps out around 4.5MB, and a full legacy
+      // export easily exceeds that. Only the resulting blob URLs (a few
+      // hundred bytes total) go to the migration-jobs API.
+      const uploaded = await Promise.all(
+        files.map(async (f) => {
+          const blob = await upload(f.name, f.file, {
+            access: "private",
+            handleUploadUrl: "/api/blob-upload",
+          });
+          return { kind: f.sourceKind, fileName: f.name, recordCount: f.records, blobUrl: blob.url };
+        }),
+      );
+      const created = await createMigrationJob(uploaded);
+      if (created) {
+        router.push(`/migrate/processing?job=${created.jobId}`);
+        return;
+      }
+    } catch {
+      // fall through to error state below
     }
+    setStarting(false);
+    setStartError(true);
   };
 
   const removeFile = (name: string) => {

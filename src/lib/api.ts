@@ -15,7 +15,8 @@ export interface CreateJobSourceFile {
   kind: SourceKind;
   fileName: string;
   recordCount: number;
-  content: string;
+  /** Vercel Blob URL the file content was uploaded to (see file-drop-view). */
+  blobUrl: string;
 }
 
 export interface CreatedJob {

@@ -3,6 +3,7 @@
  * GET  /api/v1/migration-jobs — list jobs, newest first.
  */
 
+import { get } from "@vercel/blob";
 import { desc } from "drizzle-orm";
 import { after, NextRequest, NextResponse } from "next/server";
 import { fnv1a } from "@/data/generate";
@@ -19,7 +20,8 @@ interface SourceFileInput {
   kind: SourceKind;
   fileName: string;
   recordCount: number;
-  content?: string;
+  /** Vercel Blob URL the browser uploaded the file content to directly. */
+  blobUrl: string;
 }
 
 interface CreateJobBody {
@@ -35,6 +37,18 @@ async function resolveTenantId(tenantId?: string): Promise<string> {
 
   const [created] = await db.insert(tenants).values({ name: "Demo Tenant" }).returning({ id: tenants.id });
   return created.id;
+}
+
+/** Fetch a source file's real content from Blob storage (private, needs the read-write token). */
+async function fetchBlobContent(blobUrl: string): Promise<string | undefined> {
+  try {
+    const result = await get(blobUrl, { access: "private" });
+    if (result === null || result.stream === null) return undefined;
+    return await new Response(result.stream).text();
+  } catch (err) {
+    console.error(`failed to fetch blob content from ${blobUrl}:`, err);
+    return undefined;
+  }
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -53,9 +67,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   for (const file of body.sourceFiles) {
-    if (!file.kind || !file.fileName || typeof file.recordCount !== "number") {
+    if (!file.kind || !file.fileName || typeof file.recordCount !== "number" || !file.blobUrl) {
       return NextResponse.json(
-        apiError("missing_fields", "each sourceFile requires kind, fileName, recordCount"),
+        apiError("missing_fields", "each sourceFile requires kind, fileName, recordCount, blobUrl"),
         { status: 400 },
       );
     }
@@ -76,24 +90,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         kind: file.kind,
         fileName: file.fileName,
         recordCount: file.recordCount,
-        rawHash: fnv1a(file.content ?? `${file.fileName}:${file.recordCount}`),
+        rawHash: fnv1a(file.blobUrl),
       })),
     )
     .returning();
 
-  // Run the pipeline after the response is sent. Content is only ever held
-  // in memory for this request — it is not persisted to source_files.
-  const pipelineInput: SourceFile[] = insertedFiles.map((row, i) => ({
-    id: row.id,
-    kind: row.kind as SourceKind,
-    fileName: row.fileName,
-    recordCount: row.recordCount,
-    rawHash: row.rawHash,
-    ingestedAt: row.ingestedAt.toISOString(),
-    content: body.sourceFiles[i]?.content,
-  }));
-
+  // Run the pipeline after the response is sent. Blob content is fetched
+  // here (not persisted to source_files) and handed to the pipeline as
+  // in-memory SourceFile content, same as before Blob storage existed.
   after(async () => {
+    const pipelineInput: SourceFile[] = await Promise.all(
+      insertedFiles.map(async (row, i) => ({
+        id: row.id,
+        kind: row.kind as SourceKind,
+        fileName: row.fileName,
+        recordCount: row.recordCount,
+        rawHash: row.rawHash,
+        ingestedAt: row.ingestedAt.toISOString(),
+        content: await fetchBlobContent(body.sourceFiles[i].blobUrl),
+      })),
+    );
     await runPipelineForJob(job.id, pipelineInput).catch((err) => {
       console.error(`pipeline run failed for job ${job.id}:`, err);
     });

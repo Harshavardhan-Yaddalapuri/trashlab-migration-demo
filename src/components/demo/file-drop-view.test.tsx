@@ -161,10 +161,13 @@ describe("FileDropView", () => {
       expect(screen.getByText("Start Migration")).toBeInTheDocument();
     });
     fireEvent.click(screen.getByText("Start Migration"));
-    // jsdom has no real network; createMigrationJob resolves to null.
-    await waitFor(() => {
-      expect(screen.getByText(/Couldn't start the migration/)).toBeInTheDocument();
-    });
+    // jsdom has no real network; the blob upload fails and the API call never happens.
+    await waitFor(
+      () => {
+        expect(screen.getByText(/Couldn't start the migration/)).toBeInTheDocument();
+      },
+      { timeout: 10000 },
+    );
     expect(screen.getByText("Start Migration")).toBeInTheDocument();
   });
 
