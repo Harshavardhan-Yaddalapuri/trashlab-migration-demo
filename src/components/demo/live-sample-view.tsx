@@ -5,11 +5,13 @@
  * through the pipeline. Progress bars fill incrementally. User advances
  * to full-batch view when ready.
  *
+ * Light theme, TrashLab design language, shared header with back nav.
  * No em-dashes in user-facing text.
  */
 
 import { useEffect, useState } from "react";
 import { useDemoStore } from "@/components/demo/demo-store";
+import { CockpitHeader } from "@/components/cockpit/cockpit-header";
 import { SourceSystemsPanel } from "@/components/cockpit/source-systems-panel";
 import { PipelineActivityPanel } from "@/components/cockpit/pipeline-activity-panel";
 import { ExceptionQueuePanel } from "@/components/cockpit/exception-queue-panel";
@@ -109,32 +111,28 @@ export function LiveSampleView() {
   const complete = tick >= 20;
 
   return (
-    <div className="flex h-screen flex-col bg-zinc-950">
-      <header className="flex shrink-0 items-center justify-between border-b border-zinc-800/60 px-5 py-2.5">
-        <div className="flex items-center gap-4">
-          <h1 className="text-sm font-semibold tracking-tight text-zinc-100">
-            TrashLab Migration Cockpit
-          </h1>
-          <span className="font-mono text-[10px] uppercase tracking-widest text-zinc-600">
-            Live Sample / 500 rows
-          </span>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="text-right">
-            <span className="font-mono text-[9px] uppercase tracking-widest text-zinc-600">Records</span>
-            <p className="font-mono text-xs tabular-nums text-zinc-300">{formatCount(500)}</p>
+    <div className="flex h-screen flex-col bg-white">
+      <CockpitHeader
+        phaseLabel="Live Sample / 500 rows"
+        status={{ label: complete ? "sample complete" : "running", active: !complete }}
+        right={
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <span className="text-[9px] font-semibold uppercase tracking-widest text-white/50">Records</span>
+              <p className="font-mono text-xs tabular-nums text-white/90">{formatCount(500)}</p>
+            </div>
+            {complete && (
+              <button
+                onClick={advance}
+                className="inline-flex items-center gap-2 rounded-full bg-[#10b981] px-5 py-2 text-xs font-semibold text-white transition-all hover:bg-[#0d9a6c]"
+              >
+                Run full 150k batch
+                <span aria-hidden>{"->"}</span>
+              </button>
+            )}
           </div>
-          {complete && (
-            <button
-              onClick={advance}
-              className="inline-flex items-center gap-2 rounded-lg bg-emerald-500/20 border border-emerald-500/30 px-4 py-1.5 text-xs font-medium text-emerald-400 transition-all hover:bg-emerald-500/30"
-            >
-              Run full 150k batch
-              <span aria-hidden>{"->"}</span>
-            </button>
-          )}
-        </div>
-      </header>
+        }
+      />
 
       <div className="grid flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[260px_1fr_320px]">
         <SourceSystemsPanel sources={SAMPLE_SOURCES} />

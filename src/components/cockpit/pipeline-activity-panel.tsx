@@ -2,22 +2,22 @@ import { formatCount } from "@/components/ui/format";
 import type { AgentStage, PipelineEvent } from "@/components/cockpit/types";
 
 const PHASE_STYLES: Record<AgentStage["phase"], { dot: string; text: string; bar: string }> = {
-  waiting: { dot: "bg-zinc-700", text: "text-zinc-600", bar: "bg-zinc-800" },
-  active: { dot: "bg-emerald-500", text: "text-emerald-400", bar: "bg-emerald-500" },
-  done: { dot: "bg-emerald-600", text: "text-emerald-600", bar: "bg-emerald-600" },
-  error: { dot: "bg-red-500", text: "text-red-400", bar: "bg-red-500" },
+  waiting: { dot: "bg-slate-200", text: "text-slate-400", bar: "bg-slate-200" },
+  active: { dot: "bg-[#10a6cc]", text: "text-[#10a6cc]", bar: "bg-[#10a6cc]" },
+  done: { dot: "bg-[#10b981]", text: "text-[#10b981]", bar: "bg-[#10b981]" },
+  error: { dot: "bg-red-500", text: "text-red-500", bar: "bg-red-500" },
 };
 
 const EVENT_LEVEL_COLORS: Record<PipelineEvent["level"], string> = {
-  info: "text-zinc-400",
-  warn: "text-amber-400",
-  error: "text-red-400",
+  info: "text-slate-500",
+  warn: "text-amber-600",
+  error: "text-red-500",
 };
 
 const EVENT_LEVEL_BARS: Record<PipelineEvent["level"], string> = {
-  info: "border-zinc-700",
-  warn: "border-amber-600/50",
-  error: "border-red-600/50",
+  info: "border-[#e0deff]",
+  warn: "border-amber-300",
+  error: "border-red-300",
 };
 
 function stageProgressPct(stage: AgentStage): number {
@@ -39,16 +39,16 @@ export function PipelineActivityPanel({
   return (
     <section
       aria-label="Pipeline activity"
-      className="flex flex-col bg-zinc-950"
+      className="flex flex-col bg-white"
     >
-      <div className="border-b border-zinc-800/60 px-4 py-3">
-        <h2 className="font-mono text-[11px] uppercase tracking-widest text-zinc-500">
+      <div className="border-b border-[#e0deff] px-4 py-3">
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6260af]">
           Pipeline
         </h2>
       </div>
 
       {/* Agent stages */}
-      <div className="border-b border-zinc-800/60">
+      <div className="border-b border-[#e0deff]">
         <ul className="flex flex-col">
           {stages.map((stage) => {
             const style = PHASE_STYLES[stage.phase];
@@ -63,12 +63,12 @@ export function PipelineActivityPanel({
                   aria-hidden
                 />
                 <div className="w-28 shrink-0">
-                  <span className="text-xs font-medium text-zinc-200">
+                  <span className="text-xs font-medium text-slate-800">
                     {stage.label}
                   </span>
                 </div>
                 <div className="flex-1">
-                  <div className="h-1 w-full overflow-hidden rounded-full bg-zinc-800">
+                  <div className="h-1 w-full overflow-hidden rounded-full bg-slate-100">
                     <div
                       className={`h-full rounded-full ${style.bar} transition-all duration-500 motion-reduce:transition-none`}
                       style={{ width: `${pct}%` }}
@@ -80,7 +80,7 @@ export function PipelineActivityPanel({
                   <span className={`font-mono text-[10px] tabular-nums ${style.text}`}>
                     {formatCount(stage.processed)}/{formatCount(stage.total)}
                   </span>
-                  <span className="w-16 text-right font-mono text-[10px] tabular-nums text-zinc-600">
+                  <span className="w-16 text-right font-mono text-[10px] tabular-nums text-slate-400">
                     {formatThroughput(stage)}
                   </span>
                 </div>
@@ -92,14 +92,14 @@ export function PipelineActivityPanel({
 
       {/* Activity feed */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        <div className="border-b border-zinc-800/40 px-4 py-2">
-          <h3 className="font-mono text-[10px] uppercase tracking-widest text-zinc-600">
+        <div className="border-b border-[#e0deff]/60 px-4 py-2">
+          <h3 className="text-[10px] font-semibold uppercase tracking-widest text-[#6260af]">
             Activity Feed
           </h3>
         </div>
         {events.length === 0 ? (
           <div className="flex flex-1 items-center justify-center px-4 py-12">
-            <p className="font-mono text-xs text-zinc-600">Waiting for events...</p>
+            <p className="text-xs text-slate-400">Waiting for events...</p>
           </div>
         ) : (
           <ul className="flex-1 overflow-y-auto">
@@ -112,11 +112,11 @@ export function PipelineActivityPanel({
                   <span className={`font-mono text-[10px] uppercase tracking-wider ${EVENT_LEVEL_COLORS[evt.level]}`}>
                     {evt.type}
                   </span>
-                  <span className="shrink-0 font-mono text-[10px] tabular-nums text-zinc-700">
+                  <span className="shrink-0 font-mono text-[10px] tabular-nums text-slate-400">
                     {new Date(evt.at).toLocaleTimeString("en-US", { hour12: false })}
                   </span>
                 </div>
-                <p className="mt-0.5 text-xs leading-5 text-zinc-300">
+                <p className="mt-0.5 text-xs leading-5 text-slate-600">
                   {evt.message}
                 </p>
               </li>

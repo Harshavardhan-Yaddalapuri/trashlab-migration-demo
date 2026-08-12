@@ -1,5 +1,35 @@
 @import "tailwindcss";
 
+/* TrashLab design tokens — extracted from trashlab.com production CSS (2026-08-12) */
+:root {
+  /* Brand palette */
+  --tl-indigo: #1a174f;        /* primary deep indigo */
+  --tl-indigo-2: #312d97;      /* button indigo */
+  --tl-indigo-3: #5149d7;      /* hover indigo */
+  --tl-cyan: #10a6cc;          /* accent cyan */
+  --tl-cyan-2: #10d6e6;        /* bright cyan */
+  --tl-emerald: #10b981;       /* success / revenue */
+  --tl-bg: #ffffff;            /* page background */
+  --tl-bg-tint: #f7f7ff;       /* soft indigo tint */
+  --tl-bg-tint-2: #ecebff;     /* deeper tint */
+  --tl-border: #e0deff;        /* indigo-tinted border */
+  --tl-text: #0f172a;          /* near-black text */
+  --tl-text-muted: #6260af;    /* muted indigo text */
+}
+
+/* Manrope — TrashLab's font */
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap");
+
+html {
+  font-family: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body {
+  background-color: var(--tl-bg);
+  color: var(--tl-text);
+  -webkit-font-smoothing: antialiased;
+}
+
 /* Cockpit pulse animation for active state indicators.
    Only used for state transitions, disabled by prefers-reduced-motion. */
 @keyframes cockpit-pulse {

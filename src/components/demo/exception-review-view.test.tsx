@@ -24,21 +24,25 @@ describe("ExceptionReviewView", () => {
 
   it("renders aggregated exceptions section", () => {
     render(<ExceptionReviewView />);
-    // The heading text includes the count in parens, so match on partial text
     expect(
       screen.getByText(/Aggregated by Type/),
     ).toBeInTheDocument();
   });
 
-  it("renders evidence for featured exceptions", () => {
+  it("shows evidence after clicking Show evidence", () => {
     render(<ExceptionReviewView />);
+    // Evidence is hidden by default; click the first toggle
+    const toggle = screen.getAllByText("Show evidence")[0];
+    fireEvent.click(toggle);
     expect(
       screen.getByText(/RoutePro rate: \$300\/mo/i),
     ).toBeInTheDocument();
   });
 
-  it("renders suggested fixes", () => {
+  it("shows suggested fixes after expanding evidence", () => {
     render(<ExceptionReviewView />);
+    const toggle = screen.getAllByText("Show evidence")[0];
+    fireEvent.click(toggle);
     expect(
       screen.getByText(/Use most recent rate from QuickBooks/i),
     ).toBeInTheDocument();
@@ -46,7 +50,7 @@ describe("ExceptionReviewView", () => {
 
   it("renders confidence scores", () => {
     render(<ExceptionReviewView />);
-    expect(screen.getByText("0.97")).toBeInTheDocument();
+    expect(screen.getByText("confidence 0.97")).toBeInTheDocument();
   });
 
   it("renders featured count in header", () => {
@@ -54,28 +58,44 @@ describe("ExceptionReviewView", () => {
     expect(screen.getByText(/0\/8/)).toBeInTheDocument();
   });
 
-  it("approve button resolves an exception", () => {
+  it("approve requires confirmation then resolves an exception", () => {
     render(<ExceptionReviewView />);
     const approveButtons = screen.getAllByText("Approve");
     expect(approveButtons.length).toBe(8);
     fireEvent.click(approveButtons[0]);
+    // Confirm step appears
+    expect(screen.getByText("Confirm")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Confirm"));
     expect(screen.getAllByText(/approved/i).length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows bulk resolve button after all featured are resolved", () => {
     render(<ExceptionReviewView />);
     const approveButtons = screen.getAllByText("Approve");
-    approveButtons.forEach((btn) => fireEvent.click(btn));
+    approveButtons.forEach((btn) => {
+      fireEvent.click(btn);
+      fireEvent.click(screen.getByText("Confirm"));
+    });
     expect(screen.getByText("Bulk Resolve All")).toBeInTheDocument();
   });
 
   it("shows View Report button after all resolved", () => {
     render(<ExceptionReviewView />);
-    // Resolve all featured
     const approveButtons = screen.getAllByText("Approve");
-    approveButtons.forEach((btn) => fireEvent.click(btn));
-    // Bulk resolve
+    approveButtons.forEach((btn) => {
+      fireEvent.click(btn);
+      fireEvent.click(screen.getByText("Confirm"));
+    });
     fireEvent.click(screen.getByText("Bulk Resolve All"));
     expect(screen.getByText("View Report")).toBeInTheDocument();
+  });
+
+  it("drills into aggregated records on row click", () => {
+    render(<ExceptionReviewView />);
+    // "duplicate_customer" appears in featured badge AND aggregated row; click the row (last match)
+    const matches = screen.getAllByText("duplicate_customer");
+    fireEvent.click(matches[matches.length - 1]);
+    expect(screen.getByText(/412 records/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Summit Construction LLC/).length).toBeGreaterThanOrEqual(1);
   });
 });

@@ -5,11 +5,15 @@
  * and suggested fixes, plus the 1,493 aggregated by type with bulk-resolve.
  * User can approve individual exceptions and then advance to the report.
  *
+ * Light theme, TrashLab design language, shared header with back nav.
+ * Evidence is expandable, approve shows what you are approving,
+ * aggregated rows drill into the records behind the count.
  * No em-dashes in user-facing text.
  */
 
 import { useState } from "react";
 import { useDemoStore } from "@/components/demo/demo-store";
+import { CockpitHeader } from "@/components/cockpit/cockpit-header";
 import { formatCount } from "@/components/ui/format";
 
 interface FeaturedException {
@@ -64,7 +68,7 @@ const FEATURED: FeaturedException[] = [
     type: "duplicate_customer",
     severity: "warning",
     summary: "'Summit Construction LLC' and 'S. Construction' share address+phone",
-    evidence: ["Customer C-00231: Summit Construction LLC, 412 Industrial Pkwy, +13145550123", "Customer C-00892: S. Construction, 412 Industrial Pkwy, +13145550123", "Same billing contact: John Reyes"],
+    evidence: ["Customer C-00231: Summit Construction LLC, 412 Industrial Pkwy, +131****0123", "Customer C-00892: S. Construction, 412 Industrial Pkwy, +131****0123", "Same billing contact: John Reyes"],
     suggestedFix: "Merge into canonical record C-00231.",
     confidence: 0.91,
   },
@@ -101,23 +105,24 @@ interface AggregatedGroup {
   type: string;
   count: number;
   severity: "critical" | "warning" | "info";
+  sample: string[];
 }
 
 const AGGREGATED: AggregatedGroup[] = [
-  { type: "duplicate_customer", count: 412, severity: "warning" },
-  { type: "date_ambiguity", count: 308, severity: "warning" },
-  { type: "orphan_container", count: 245, severity: "warning" },
-  { type: "unmappable_code", count: 198, severity: "warning" },
-  { type: "closed_unbilled", count: 120, severity: "info" },
-  { type: "ungeocodable", count: 98, severity: "info" },
-  { type: "pricing_conflict", count: 67, severity: "critical" },
-  { type: "unmatched_ticket", count: 45, severity: "info" },
+  { type: "duplicate_customer", count: 412, severity: "warning", sample: ["C-00231 vs C-00892 (Summit Construction LLC / S. Construction)", "C-01120 vs C-01121 (Apex Disposal Inc / Apex Disposal)", "C-04510 vs C-04511 (Blue Ridge Waste / Blue Ridge Waste LLC)"] },
+  { type: "date_ambiguity", count: 308, severity: "warning", sample: ["A-03102: 01/02/23 (Jan 2 or Feb 1?)", "A-03115: 03/04/23 (Mar 4 or Apr 3?)", "A-03188: 11/12/23 (Nov 12 or Dec 11?)"] },
+  { type: "orphan_container", count: 245, severity: "warning", sample: ["RC-33109: no site assignment", "RC-33110: no site assignment", "RC-33112: no site assignment"] },
+  { type: "unmappable_code", count: 198, severity: "warning", sample: ["NOPE-1 on A-08992", "SW-OLD-2YD on A-09001", "FR-UNK on A-09012"] },
+  { type: "closed_unbilled", count: 120, severity: "info", sample: ["A-01567: closed 2026-03-01, unbilled", "A-01568: closed 2026-03-01, unbilled", "A-01570: closed 2026-03-05, unbilled"] },
+  { type: "ungeocodable", count: 98, severity: "info", sample: ["S-04823: PO Box 1142", "S-04824: PO Box 1143", "S-04825: PO Box 1144"] },
+  { type: "pricing_conflict", count: 67, severity: "critical", sample: ["A-04231: $300 vs $450 (RC-1023)", "A-04232: $280 vs $420 (RC-1024)", "A-04233: $310 vs $460 (RC-1025)"] },
+  { type: "unmatched_ticket", count: 45, severity: "info", sample: ["T-09231: 4.2 tons, no link", "T-09232: 3.8 tons, no link", "T-09233: 5.1 tons, no link"] },
 ];
 
-const SEVERITY_COLORS: Record<string, string> = {
-  critical: "text-red-400 border-red-600/60",
-  warning: "text-amber-400 border-amber-600/50",
-  info: "text-zinc-400 border-zinc-700",
+const SEVERITY_STYLES: Record<string, { text: string; badge: string }> = {
+  critical: { text: "text-red-600", badge: "bg-red-50 text-red-600 border-red-200" },
+  warning: { text: "text-amber-600", badge: "bg-amber-50 text-amber-700 border-amber-200" },
+  info: { text: "text-slate-500", badge: "bg-slate-50 text-slate-500 border-slate-200" },
 };
 
 const TOTAL_AGGREGATED = AGGREGATED.reduce((sum, g) => sum + g.count, 0);
@@ -126,102 +131,144 @@ export function ExceptionReviewView() {
   const advance = useDemoStore((s) => s.advance);
   const [resolved, setResolved] = useState<Set<string>>(new Set());
   const [bulkResolved, setBulkResolved] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [drillDown, setDrillDown] = useState<AggregatedGroup | null>(null);
 
   const allFeaturedResolved = resolved.size === FEATURED.length;
   const allDone = allFeaturedResolved && bulkResolved;
 
+  const toggleExpand = (id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   const resolve = (id: string) => {
     setResolved((prev) => new Set([...prev, id]));
+    setConfirming(null);
   };
 
   return (
-    <div className="flex h-screen flex-col bg-zinc-950 text-zinc-100">
-      {/* Header */}
-      <header className="flex shrink-0 items-center justify-between border-b border-zinc-800/60 px-5 py-2.5">
-        <div className="flex items-center gap-4">
-          <h1 className="text-sm font-semibold tracking-tight text-zinc-100">
-            TrashLab Migration Cockpit
-          </h1>
-          <span className="font-mono text-[10px] uppercase tracking-widest text-zinc-600">
-            Exception Review
-          </span>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="text-right">
-            <span className="font-mono text-[9px] uppercase tracking-widest text-zinc-600">Featured</span>
-            <p className="font-mono text-xs tabular-nums text-zinc-300">{resolved.size}/{FEATURED.length}</p>
+    <div className="flex h-screen flex-col bg-white">
+      <CockpitHeader
+        phaseLabel="Exception Review"
+        status={{ label: allDone ? "all resolved" : "reviewing", active: !allDone }}
+        right={
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <span className="text-[9px] font-semibold uppercase tracking-widest text-white/50">Featured</span>
+              <p className="font-mono text-xs tabular-nums text-white/90">{resolved.size}/{FEATURED.length}</p>
+            </div>
+            <div className="text-right">
+              <span className="text-[9px] font-semibold uppercase tracking-widest text-white/50">Aggregated</span>
+              <p className="font-mono text-xs tabular-nums text-white/90">{bulkResolved ? "0" : formatCount(TOTAL_AGGREGATED)}</p>
+            </div>
+            {allDone && (
+              <button
+                onClick={advance}
+                className="inline-flex items-center gap-2 rounded-full bg-[#10b981] px-5 py-2 text-xs font-semibold text-white transition-all hover:bg-[#0d9a6c]"
+              >
+                View Report
+                <span aria-hidden>{"->"}</span>
+              </button>
+            )}
           </div>
-          <div className="text-right">
-            <span className="font-mono text-[9px] uppercase tracking-widest text-zinc-600">Aggregated</span>
-            <p className="font-mono text-xs tabular-nums text-amber-400">{bulkResolved ? "0" : formatCount(TOTAL_AGGREGATED)}</p>
-          </div>
-          {allDone && (
-            <button
-              onClick={advance}
-              className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 px-4 py-1.5 text-xs font-semibold text-zinc-950 transition-all hover:bg-emerald-400"
-            >
-              View Report
-              <span aria-hidden>{"->"}</span>
-            </button>
-          )}
-        </div>
-      </header>
+        }
+      />
 
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-4xl px-6 py-6">
           {/* Featured exceptions */}
           <div className="mb-8">
-            <h2 className="mb-4 font-mono text-[11px] uppercase tracking-widest text-zinc-500">
+            <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6260af]">
               Featured Exceptions ({FEATURED.length})
             </h2>
             <div className="space-y-4">
               {FEATURED.map((exc) => {
                 const isResolved = resolved.has(exc.id);
+                const isExpanded = expanded.has(exc.id);
+                const isConfirming = confirming === exc.id;
+                const sev = SEVERITY_STYLES[exc.severity];
                 return (
                   <div
                     key={exc.id}
-                    className={`rounded-lg border p-4 transition-all ${
+                    className={`rounded-2xl border p-5 transition-all ${
                       isResolved
-                        ? "border-emerald-500/20 bg-emerald-500/5"
-                        : "border-zinc-800 bg-zinc-900/50"
+                        ? "border-[#10b981]/30 bg-[#10b981]/5"
+                        : "border-[#e0deff] bg-white shadow-sm"
                     }`}
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <span className={`font-mono text-[10px] uppercase tracking-wider ${SEVERITY_COLORS[exc.severity].split(" ")[0]}`}>
-                          {exc.type}
-                        </span>
-                        <p className="mt-1 text-sm font-medium text-zinc-100">{exc.summary}</p>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${sev.badge}`}>
+                            {exc.type}
+                          </span>
+                          <span className="font-mono text-[10px] tabular-nums text-[#6260af]">
+                            confidence {exc.confidence.toFixed(2)}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-sm font-medium text-slate-800">{exc.summary}</p>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="font-mono text-[10px] tabular-nums text-zinc-600">
-                          {exc.confidence.toFixed(2)}
-                        </span>
+                      <div className="flex shrink-0 items-center gap-2">
                         {isResolved ? (
-                          <span className="font-mono text-[10px] uppercase tracking-wider text-emerald-400">approved</span>
+                          <span className="rounded-full bg-[#10b981]/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#10b981]">
+                            approved
+                          </span>
+                        ) : isConfirming ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => resolve(exc.id)}
+                              className="rounded-full bg-[#10b981] px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-white transition-all hover:bg-[#0d9a6c]"
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              onClick={() => setConfirming(null)}
+                              className="rounded-full border border-[#e0deff] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#6260af] transition-colors hover:bg-[#f7f7ff]"
+                            >
+                              Cancel
+                            </button>
+                          </div>
                         ) : (
                           <button
-                            onClick={() => resolve(exc.id)}
-                            className="rounded border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 font-mono text-[10px] uppercase tracking-wider text-emerald-400 transition-all hover:bg-emerald-500/20"
+                            onClick={() => setConfirming(exc.id)}
+                            className="rounded-full bg-[#312d97] px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-white transition-all hover:bg-[#5149d7]"
                           >
                             Approve
                           </button>
                         )}
                       </div>
                     </div>
+
+                    {/* Evidence — expandable */}
                     {!isResolved && (
-                      <>
-                        <ul className="mt-3 space-y-1">
-                          {exc.evidence.map((item, i) => (
-                            <li key={i} className="font-mono text-[11px] leading-5 text-zinc-500">
-                              {item}
-                            </li>
-                          ))}
-                        </ul>
-                        <p className="mt-3 text-xs text-zinc-400">
-                          <span className="text-zinc-600">Fix:</span> {exc.suggestedFix}
-                        </p>
-                      </>
+                      <div className="mt-3">
+                        <button
+                          onClick={() => toggleExpand(exc.id)}
+                          className="text-xs font-medium text-[#5149d7] hover:text-[#312d97]"
+                        >
+                          {isExpanded ? "Hide evidence" : "Show evidence"}
+                        </button>
+                        {isExpanded && (
+                          <div className="mt-2 rounded-xl border border-[#e0deff] bg-[#f7f7ff] p-4">
+                            <ul className="space-y-1.5">
+                              {exc.evidence.map((item, i) => (
+                                <li key={i} className="font-mono text-[11px] leading-5 text-slate-600">
+                                  {item}
+                                </li>
+                              ))}
+                            </ul>
+                            <p className="mt-3 text-xs text-slate-700">
+                              <span className="font-semibold text-[#6260af]">Suggested fix:</span> {exc.suggestedFix}
+                            </p>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 );
@@ -232,54 +279,114 @@ export function ExceptionReviewView() {
           {/* Aggregated exceptions */}
           <div>
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="font-mono text-[11px] uppercase tracking-widest text-zinc-500">
+              <h2 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6260af]">
                 Aggregated by Type ({formatCount(TOTAL_AGGREGATED)})
               </h2>
               {!bulkResolved && allFeaturedResolved && (
                 <button
                   onClick={() => setBulkResolved(true)}
-                  className="rounded border border-amber-500/30 bg-amber-500/10 px-3 py-1 font-mono text-[10px] uppercase tracking-wider text-amber-400 transition-all hover:bg-amber-500/20"
+                  className="rounded-full border border-[#10b981]/40 bg-[#10b981]/10 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[#10b981] transition-all hover:bg-[#10b981]/20"
                 >
                   Bulk Resolve All
                 </button>
               )}
             </div>
-            <div className="overflow-hidden rounded-lg border border-zinc-800/60">
+            <div className="overflow-hidden rounded-2xl border border-[#e0deff]">
               <table className="w-full">
                 <thead>
-                  <tr className="border-b border-zinc-800/60">
-                    <th className="px-4 py-2.5 text-left font-mono text-[10px] uppercase tracking-wider text-zinc-600">Type</th>
-                    <th className="px-4 py-2.5 text-right font-mono text-[10px] uppercase tracking-wider text-zinc-600">Count</th>
-                    <th className="px-4 py-2.5 text-right font-mono text-[10px] uppercase tracking-wider text-zinc-600">Status</th>
+                  <tr className="border-b border-[#e0deff] bg-[#f7f7ff]">
+                    <th className="px-4 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-[#6260af]">Type</th>
+                    <th className="px-4 py-2.5 text-right text-[10px] font-semibold uppercase tracking-wider text-[#6260af]">Count</th>
+                    <th className="px-4 py-2.5 text-right text-[10px] font-semibold uppercase tracking-wider text-[#6260af]">Status</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {AGGREGATED.map((group) => (
-                    <tr key={group.type} className="border-b border-zinc-800/40 last:border-0">
-                      <td className={`px-4 py-2.5 font-mono text-xs ${SEVERITY_COLORS[group.severity].split(" ")[0]}`}>
-                        {group.type}
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-zinc-300">
-                        {formatCount(group.count)}
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-mono text-[10px] uppercase tracking-wider">
-                        {bulkResolved ? (
-                          <span className="text-emerald-400">resolved</span>
-                        ) : (
-                          <span className="text-zinc-600">open</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {AGGREGATED.map((group) => {
+                    const sev = SEVERITY_STYLES[group.severity];
+                    return (
+                      <tr
+                        key={group.type}
+                        onClick={() => setDrillDown(group)}
+                        className="cursor-pointer border-b border-[#e0deff] last:border-0 transition-colors hover:bg-[#f7f7ff]"
+                      >
+                        <td className={`px-4 py-2.5 font-mono text-xs ${sev.text}`}>
+                          {group.type}
+                        </td>
+                        <td className="px-4 py-2.5 text-right font-mono text-xs tabular-nums text-slate-700">
+                          {formatCount(group.count)}
+                        </td>
+                        <td className="px-4 py-2.5 text-right text-[10px] font-semibold uppercase tracking-wider">
+                          {bulkResolved ? (
+                            <span className="text-[#10b981]">resolved</span>
+                          ) : (
+                            <span className="text-[#6260af]">open</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
-            <p className="mt-3 font-mono text-[10px] text-zinc-700">
-              All aggregated exceptions share the same pattern as their featured counterpart. Bulk resolution applies the suggested fix from the featured case.
+            <p className="mt-3 text-xs text-[#6260af]">
+              Click a row to see the records behind the count. All aggregated exceptions share the same pattern as their featured counterpart.
             </p>
           </div>
         </div>
       </div>
+
+      {/* Drill-down modal */}
+      {drillDown && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={() => setDrillDown(null)}>
+          <div className="w-full max-w-lg rounded-2xl border border-[#e0deff] bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <span className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${SEVERITY_STYLES[drillDown.severity].badge}`}>
+                  {drillDown.type}
+                </span>
+                <h3 className="mt-2 text-lg font-bold text-slate-900">
+                  {formatCount(drillDown.count)} records
+                </h3>
+              </div>
+              <button
+                onClick={() => setDrillDown(null)}
+                className="rounded-full p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+                aria-label="Close"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <p className="mb-4 text-sm text-slate-600">
+              Sample of the records in this group:
+            </p>
+            <ul className="space-y-2">
+              {drillDown.sample.map((s, i) => (
+                <li key={i} className="rounded-lg border border-[#e0deff] bg-[#f7f7ff] px-3 py-2 font-mono text-[11px] text-slate-700">
+                  {s}
+                </li>
+              ))}
+            </ul>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                onClick={() => setDrillDown(null)}
+                className="rounded-full border border-[#e0deff] px-5 py-2 text-xs font-semibold text-[#6260af] transition-colors hover:bg-[#f7f7ff]"
+              >
+                Close
+              </button>
+              {!bulkResolved && (
+                <button
+                  onClick={() => { setBulkResolved(true); setDrillDown(null); }}
+                  className="rounded-full bg-[#312d97] px-5 py-2 text-xs font-semibold text-white transition-all hover:bg-[#5149d7]"
+                >
+                  Resolve this type
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -7,7 +7,7 @@ describe("CockpitShell", () => {
   it("renders the header with app name", () => {
     render(<CockpitShell />);
     expect(
-      screen.getByText("TrashLab Migration Cockpit"),
+      screen.getByText("Migration Cockpit"),
     ).toBeInTheDocument();
   });
 

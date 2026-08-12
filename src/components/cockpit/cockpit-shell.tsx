@@ -15,38 +15,40 @@ export function CockpitShell() {
   const openExceptions = mockExceptionQueue.filter((e) => e.reviewStatus === "open").length;
 
   return (
-    <div className="flex h-screen flex-col bg-zinc-950">
+    <div className="flex h-screen flex-col bg-white">
       {/* Header bar */}
-      <header className="flex shrink-0 items-center justify-between border-b border-zinc-800/60 px-5 py-2.5">
+      <header className="flex shrink-0 items-center justify-between bg-[#1a174f] px-5 py-2.5">
         <div className="flex items-center gap-4">
-          <h1 className="text-sm font-semibold tracking-tight text-zinc-100">
-            TrashLab Migration Cockpit
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/assets/trashlab-logo.svg" alt="TrashLab" className="h-6 w-auto" />
+          <h1 className="text-sm font-semibold tracking-tight text-white/90">
+            Migration Cockpit
           </h1>
-          <span className="font-mono text-[10px] uppercase tracking-widest text-zinc-600">
+          <span className="text-[10px] font-semibold uppercase tracking-widest text-white/50">
             Summit Disposal Services
           </span>
         </div>
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-emerald-500 cockpit-pulse" aria-hidden />
-            <span className="font-mono text-[10px] uppercase tracking-wider text-emerald-400">
+            <span className="h-2 w-2 rounded-full bg-[#10b981] cockpit-pulse" aria-hidden />
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
               mapping
             </span>
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right">
-              <span className="font-mono text-[9px] uppercase tracking-widest text-zinc-600">
+              <span className="text-[9px] font-semibold uppercase tracking-widest text-white/50">
                 Records
               </span>
-              <p className="font-mono text-xs tabular-nums text-zinc-300">
+              <p className="font-mono text-xs tabular-nums text-white/90">
                 {formatCount(totalRecords)}
               </p>
             </div>
             <div className="text-right">
-              <span className="font-mono text-[9px] uppercase tracking-widest text-zinc-600">
+              <span className="text-[9px] font-semibold uppercase tracking-widest text-white/50">
                 Exceptions
               </span>
-              <p className="font-mono text-xs tabular-nums text-amber-400">
+              <p className="font-mono text-xs tabular-nums text-white/90">
                 {openExceptions}
               </p>
             </div>

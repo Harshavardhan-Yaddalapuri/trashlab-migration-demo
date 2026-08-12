@@ -2,14 +2,17 @@
 
 /**
  * Full batch view. Shows the full 150k records flowing through the pipeline
- * with per-agent throughput. All stages animate to completion. User advances
- * to exception review when done.
+ * with per-agent throughput. All stages animate to completion over ~24s
+ * so the fleet visibly works. User advances to exception review when done.
  *
+ * Light theme, TrashLab design language, shared header with back nav.
+ * Real timestamps generated relative to now.
  * No em-dashes in user-facing text.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useDemoStore } from "@/components/demo/demo-store";
+import { CockpitHeader } from "@/components/cockpit/cockpit-header";
 import { SourceSystemsPanel } from "@/components/cockpit/source-systems-panel";
 import { PipelineActivityPanel } from "@/components/cockpit/pipeline-activity-panel";
 import { ExceptionQueuePanel } from "@/components/cockpit/exception-queue-panel";
@@ -22,9 +25,11 @@ import type {
   SourceSystemView,
 } from "@/components/cockpit/types";
 
+const TOTAL_TICKS = 40; // 40 * 600ms = 24s of visible fleet work
+
 function buildFullStages(tick: number): AgentStage[] {
   const total = 150_000;
-  const progress = Math.min(1, tick / 30);
+  const progress = Math.min(1, tick / TOTAL_TICKS);
 
   const stagesConfig = [
     { id: "intake", label: "Intake", throughput: 32_000, factor: 1.0 },
@@ -85,16 +90,6 @@ const FULL_SOURCES: SourceSystemView[] = [
   { id: "src-legacy", kind: "legacy-export", fileName: "legacy_paper_export.tab", recordCount: 7_000, status: "parsed", parseErrors: 12 },
 ];
 
-const FULL_EVENTS: PipelineEvent[] = [
-  { id: "evt-f1", stageId: "intake", type: "SourceParsed", message: "Parsed 4 source files, 150,000 raw records ingested", at: "2026-08-12T04:01:12.000Z", level: "info" },
-  { id: "evt-f2", stageId: "normalize", type: "RecordNormalized", message: "Normalized 150,000 records. 423 date ambiguities flagged.", at: "2026-08-12T04:01:18.000Z", level: "info" },
-  { id: "evt-f3", stageId: "resolve", type: "CustomerResolved", message: "Resolved 45,000 customers. 2,200 duplicate clusters found.", at: "2026-08-12T04:01:25.000Z", level: "info" },
-  { id: "evt-f4", stageId: "resolve", type: "CustomerAutoMerged", message: "Auto-merged 2,000 clusters above 0.90 confidence.", at: "2026-08-12T04:01:26.000Z", level: "info" },
-  { id: "evt-f5", stageId: "map", type: "MappingProposed", message: "Mapping 138,000 of 150,000 records. 99.2% auto-map rate.", at: "2026-08-12T04:01:35.000Z", level: "info" },
-  { id: "evt-f6", stageId: "map", type: "ExceptionRaised", message: "Pricing conflict: agreement A-04231 has two rates for same container+site.", at: "2026-08-12T04:01:37.000Z", level: "warn" },
-  { id: "evt-f7", stageId: "validate", type: "ExceptionRaised", message: "Orphan container RC-33109 has no owning site.", at: "2026-08-12T04:01:40.000Z", level: "error" },
-];
-
 const FULL_CONFIDENCE: ConfidenceSummary = {
   high: 136_500,
   medium: 11_800,
@@ -108,64 +103,6 @@ const FULL_CONFIDENCE: ConfidenceSummary = {
   mean: 0.94,
 };
 
-export function FullBatchView() {
-  const advance = useDemoStore((s) => s.advance);
-  const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    if (tick >= 30) return;
-    const timer = setTimeout(() => setTick((t) => t + 1), 100);
-    return () => clearTimeout(timer);
-  }, [tick]);
-
-  const stages = buildFullStages(tick);
-  const complete = tick >= 30;
-
-  // Show exceptions progressively
-  const exceptionCount = Math.round(1501 * Math.min(1, tick / 30));
-  const visibleExceptions: ExceptionQueueItem[] = COMPLETE_EXCEPTIONS.slice(0, Math.min(COMPLETE_EXCEPTIONS.length, Math.ceil(exceptionCount / 188)));
-
-  return (
-    <div className="flex h-screen flex-col bg-zinc-950">
-      <header className="flex shrink-0 items-center justify-between border-b border-zinc-800/60 px-5 py-2.5">
-        <div className="flex items-center gap-4">
-          <h1 className="text-sm font-semibold tracking-tight text-zinc-100">
-            TrashLab Migration Cockpit
-          </h1>
-          <span className="font-mono text-[10px] uppercase tracking-widest text-zinc-600">
-            Full Batch / 150,000 records
-          </span>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="text-right">
-            <span className="font-mono text-[9px] uppercase tracking-widest text-zinc-600">Records</span>
-            <p className="font-mono text-xs tabular-nums text-zinc-300">{formatCount(150_000)}</p>
-          </div>
-          <div className="text-right">
-            <span className="font-mono text-[9px] uppercase tracking-widest text-zinc-600">Exceptions</span>
-            <p className="font-mono text-xs tabular-nums text-amber-400">{formatCount(exceptionCount)}</p>
-          </div>
-          {complete && (
-            <button
-              onClick={advance}
-              className="inline-flex items-center gap-2 rounded-lg bg-amber-500/20 border border-amber-500/30 px-4 py-1.5 text-xs font-medium text-amber-400 transition-all hover:bg-amber-500/30"
-            >
-              Review exceptions
-              <span aria-hidden>{"->"}</span>
-            </button>
-          )}
-        </div>
-      </header>
-
-      <div className="grid flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[260px_1fr_320px]">
-        <SourceSystemsPanel sources={FULL_SOURCES} />
-        <PipelineActivityPanel stages={stages} events={FULL_EVENTS} />
-        <ExceptionQueuePanel exceptions={visibleExceptions} confidence={FULL_CONFIDENCE} />
-      </div>
-    </div>
-  );
-}
-
 const COMPLETE_EXCEPTIONS: ExceptionQueueItem[] = [
   { id: "exc-001", type: "pricing_conflict", severity: "critical", summary: "Agreement A-04231: two rates ($300 vs $450) for same container+site", confidence: 0.97, reviewStatus: "open", suggestedFix: "Use most recent rate from QuickBooks export ($450/mo)." },
   { id: "exc-002", type: "orphan_container", severity: "warning", summary: "Container RC-33109 has no owning site assignment", confidence: 0.88, reviewStatus: "open", suggestedFix: "Assign to nearest yard site S-02104 (Springfield West)." },
@@ -176,3 +113,72 @@ const COMPLETE_EXCEPTIONS: ExceptionQueueItem[] = [
   { id: "exc-007", type: "unmatched_ticket", severity: "info", summary: "Scale ticket T-09231 has no container or agreement link", confidence: 0.86, reviewStatus: "open", suggestedFix: "Match to agreement A-02114 by date and route." },
   { id: "exc-008", type: "date_ambiguity", severity: "warning", summary: "Agreement A-03102: date '01/02/23' could be Jan 2 or Feb 1", confidence: 0.75, reviewStatus: "open", suggestedFix: "Confirm with customer: contract start date on file is Jan 2, 2023." },
 ];
+
+export function FullBatchView() {
+  const advance = useDemoStore((s) => s.advance);
+  const [tick, setTick] = useState(0);
+
+  // Real timestamps: events fire at relative offsets from mount
+  const [startTime] = useState(() => Date.now());
+  const events: PipelineEvent[] = useMemo(() => {
+    const at = (offsetSec: number) => new Date(startTime + offsetSec * 1000).toISOString();
+    return [
+      { id: "evt-f1", stageId: "intake", type: "SourceParsed", message: "Parsed 4 source files, 150,000 raw records ingested", at: at(1), level: "info" },
+      { id: "evt-f2", stageId: "normalize", type: "RecordNormalized", message: "Normalized 150,000 records. 423 date ambiguities flagged.", at: at(6), level: "info" },
+      { id: "evt-f3", stageId: "resolve", type: "CustomerResolved", message: "Resolved 45,000 customers. 2,200 duplicate clusters found.", at: at(11), level: "info" },
+      { id: "evt-f4", stageId: "resolve", type: "CustomerAutoMerged", message: "Auto-merged 2,000 clusters above 0.90 confidence.", at: at(12), level: "info" },
+      { id: "evt-f5", stageId: "map", type: "MappingProposed", message: "Mapping 138,000 of 150,000 records. 99.2% auto-map rate.", at: at(17), level: "info" },
+      { id: "evt-f6", stageId: "map", type: "ExceptionRaised", message: "Pricing conflict: agreement A-04231 has two rates for same container+site.", at: at(19), level: "warn" },
+      { id: "evt-f7", stageId: "validate", type: "ExceptionRaised", message: "Orphan container RC-33109 has no owning site.", at: at(21), level: "error" },
+    ];
+  }, [startTime]);
+
+  useEffect(() => {
+    if (tick >= TOTAL_TICKS) return;
+    const timer = setTimeout(() => setTick((t) => t + 1), 600);
+    return () => clearTimeout(timer);
+  }, [tick]);
+
+  const stages = buildFullStages(tick);
+  const complete = tick >= TOTAL_TICKS;
+
+  // Show exceptions progressively
+  const exceptionCount = Math.round(1501 * Math.min(1, tick / TOTAL_TICKS));
+  const visibleExceptions: ExceptionQueueItem[] = COMPLETE_EXCEPTIONS.slice(0, Math.min(COMPLETE_EXCEPTIONS.length, Math.ceil(exceptionCount / 188)));
+
+  return (
+    <div className="flex h-screen flex-col bg-white">
+      <CockpitHeader
+        phaseLabel="Full Batch / 150,000 records"
+        status={{ label: complete ? "batch complete" : "running", active: !complete }}
+        right={
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <span className="text-[9px] font-semibold uppercase tracking-widest text-white/50">Records</span>
+              <p className="font-mono text-xs tabular-nums text-white/90">{formatCount(150_000)}</p>
+            </div>
+            <div className="text-right">
+              <span className="text-[9px] font-semibold uppercase tracking-widest text-white/50">Exceptions</span>
+              <p className="font-mono text-xs tabular-nums text-white/90">{formatCount(exceptionCount)}</p>
+            </div>
+            {complete && (
+              <button
+                onClick={advance}
+                className="inline-flex items-center gap-2 rounded-full bg-[#312d97] px-5 py-2 text-xs font-semibold text-white transition-all hover:bg-[#5149d7]"
+              >
+                Review exceptions
+                <span aria-hidden>{"->"}</span>
+              </button>
+            )}
+          </div>
+        }
+      />
+
+      <div className="grid flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[260px_1fr_320px]">
+        <SourceSystemsPanel sources={FULL_SOURCES} />
+        <PipelineActivityPanel stages={stages} events={events} />
+        <ExceptionQueuePanel exceptions={visibleExceptions} confidence={FULL_CONFIDENCE} />
+      </div>
+    </div>
+  );
+}
