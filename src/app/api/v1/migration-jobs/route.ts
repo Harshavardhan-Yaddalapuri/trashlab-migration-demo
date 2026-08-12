@@ -4,7 +4,7 @@
  */
 
 import { desc } from "drizzle-orm";
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { fnv1a } from "@/data/generate";
 import type { SourceFile, SourceKind } from "@/lib/types";
 import { apiError } from "@/server/api/contracts";
@@ -98,24 +98,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     )
     .returning();
 
-  // TEMP DIAGNOSTIC: run the pipeline synchronously (not via after()) to
-  // test whether Next.js's after() has a shorter effective runway than the
-  // request's own maxDuration -- persistence was stalling well inside the
-  // configured 300s/observed-60s budget even though a direct COPY
-  // benchmark showed transfer itself takes ~1s for the full dataset.
-  const pipelineInput: SourceFile[] = await Promise.all(
-    insertedFiles.map(async (row, i) => ({
-      id: row.id,
-      kind: row.kind as SourceKind,
-      fileName: row.fileName,
-      recordCount: row.recordCount,
-      rawHash: row.rawHash,
-      ingestedAt: row.ingestedAt.toISOString(),
-      content: await fetchBlobContent(body.sourceFiles[i].blobUrl),
-    })),
-  );
-  await runPipelineForJob(job.id, pipelineInput).catch((err) => {
-    console.error(`pipeline run failed for job ${job.id}:`, err);
+  // Run the pipeline after the response is sent. Blob content is fetched
+  // here and handed to the pipeline as in-memory SourceFile content; the
+  // blobUrl itself is persisted on source_files above as the audit trail
+  // for what was actually uploaded (raw/normalized records aren't kept
+  // per-row in Postgres -- see pipeline-runner.ts).
+  after(async () => {
+    const pipelineInput: SourceFile[] = await Promise.all(
+      insertedFiles.map(async (row, i) => ({
+        id: row.id,
+        kind: row.kind as SourceKind,
+        fileName: row.fileName,
+        recordCount: row.recordCount,
+        rawHash: row.rawHash,
+        ingestedAt: row.ingestedAt.toISOString(),
+        content: await fetchBlobContent(body.sourceFiles[i].blobUrl),
+      })),
+    );
+    await runPipelineForJob(job.id, pipelineInput).catch((err) => {
+      console.error(`pipeline run failed for job ${job.id}:`, err);
+    });
   });
 
   return NextResponse.json({ jobId: job.id, status: job.status }, { status: 201 });
