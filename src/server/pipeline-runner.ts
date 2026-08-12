@@ -45,15 +45,19 @@ function csvRow(values: unknown[]): string {
 
 async function copyInsert<T>(tableName: string, columns: string[], rows: T[], rowToValues: (row: T) => unknown[]): Promise<void> {
   if (rows.length === 0) return;
+  const t0 = Date.now();
+  console.log(`[copy] ${tableName} start (${rows.length} rows)`);
   const client = await pool.connect();
   try {
     const stream = client.query(copyFrom(`COPY ${tableName} (${columns.join(", ")}) FROM STDIN WITH (FORMAT csv)`));
     const csv = rows.map((row) => csvRow(rowToValues(row))).join("");
+    const tBuilt = Date.now();
     await new Promise<void>((resolve, reject) => {
       stream.on("error", reject);
       stream.on("finish", resolve);
       stream.end(csv);
     });
+    console.log(`[copy] ${tableName} done in ${Date.now() - t0}ms (build=${tBuilt - t0}ms, transfer=${Date.now() - tBuilt}ms)`);
   } finally {
     client.release();
   }
@@ -161,6 +165,8 @@ export interface PipelineRunResult {
 }
 
 export async function runPipelineForJob(jobId: string, sourceFiles: SourceFile[]): Promise<PipelineRunResult> {
+  const runStart = Date.now();
+  console.log(`[pipeline] ${jobId} start`);
   const graph = buildMigrationGraph();
   const state = initialState(jobId, sourceFiles);
   const totalRaw = sourceFiles.reduce((sum, f) => sum + f.recordCount, 0);
@@ -200,6 +206,9 @@ export async function runPipelineForJob(jobId: string, sourceFiles: SourceFile[]
   if (!final) {
     throw new Error(`pipeline produced no state for job ${jobId}`);
   }
+  console.log(
+    `[pipeline] ${jobId} compute done in ${Date.now() - runStart}ms: raw=${final.rawRecords.length} normalized=${final.normalized.length} resolved=${final.resolved.length} proposals=${final.proposals.length} exceptions=${final.exceptions.length} audit=${final.audit.length}`,
+  );
 
   try {
     const resolvedById = new Map<string, ResolvedEntity>(final.resolved.map((r) => [r.id, r]));
@@ -294,6 +303,7 @@ export async function runPipelineForJob(jobId: string, sourceFiles: SourceFile[]
         new Date(a.at),
       ]),
     ]);
+    console.log(`[pipeline] ${jobId} persistence done in ${Date.now() - runStart}ms total`);
   } catch (err) {
     // Persistence failed partway through -- don't leave the job stuck at
     // "committing" forever with no way for a poller to know it died.
