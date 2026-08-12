@@ -14,12 +14,14 @@
  * is updated with real per-stage counts as the pipeline actually runs, instead
  * of jumping straight from "pending" to a fully-computed final state.
  *
- * Persistence uses Postgres COPY (not parameterized batch INSERTs): the
- * platform's serverless function timeout is a hard budget shared by
- * pipeline compute and persistence together, and at 150k-record scale
- * (~500k+ rows across 6 tables) COPY is the only approach that reliably
- * fits inside it -- batched INSERTs were ~5-10x slower and left the last
- * table's rows unwritten with no error, just a job stuck at "committing".
+ * Persistence uses Postgres COPY (not parameterized batch INSERTs), and
+ * only for resolved_entities, proposals, exceptions, and audit_events --
+ * raw_records and normalized_records stay in-memory only (used by later
+ * pipeline stages) rather than written per-row to Postgres. Nothing in the
+ * product reads either table today (see report-data.ts), and at 150k-record
+ * scale writing them anyway is ~300k rows of pure waste that used to make
+ * even COPY too slow to finish inside one serverless invocation's time
+ * budget.
  */
 
 import { eq } from "drizzle-orm";
@@ -214,25 +216,10 @@ export async function runPipelineForJob(jobId: string, sourceFiles: SourceFile[]
     const resolvedById = new Map<string, ResolvedEntity>(final.resolved.map((r) => [r.id, r]));
     const resolvedIds = new Set(resolvedById.keys());
 
-    // None of these six tables have a DB-level FK on each other (only on
-    // migration_jobs/source_files, already committed), so their COPY
-    // streams can run concurrently on separate connections instead of
-    // waiting on one another.
+    // None of these four tables have a DB-level FK on each other (only on
+    // migration_jobs, already committed), so their COPY streams can run
+    // concurrently on separate connections instead of waiting on one another.
     await Promise.all([
-      copyInsert("raw_records", ["id", "job_id", "source_file_id", "source_row", "payload", "raw_hash"], final.rawRecords, (r) => [
-        r.id,
-        jobId,
-        r.sourceFileId,
-        r.sourceRow,
-        r.payload,
-        r.rawHash,
-      ]),
-      copyInsert(
-        "normalized_records",
-        ["id", "job_id", "raw_record_id", "entity_type", "fields", "normalized_at"],
-        final.normalized,
-        (n) => [n.id, jobId, n.rawRecordId, n.entityType, n.fields, new Date(n.normalizedAt)],
-      ),
       copyInsert(
         "resolved_entities",
         ["id", "job_id", "entity_type", "cluster_id", "confidence", "merged", "canonical_fields"],

@@ -93,13 +93,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         fileName: file.fileName,
         recordCount: file.recordCount,
         rawHash: fnv1a(file.blobUrl),
+        blobUrl: file.blobUrl,
       })),
     )
     .returning();
 
   // Run the pipeline after the response is sent. Blob content is fetched
-  // here (not persisted to source_files) and handed to the pipeline as
-  // in-memory SourceFile content, same as before Blob storage existed.
+  // here and handed to the pipeline as in-memory SourceFile content; the
+  // blobUrl itself is persisted on source_files above as the audit trail
+  // for what was actually uploaded (raw/normalized records aren't kept
+  // per-row in Postgres -- see pipeline-runner.ts).
   after(async () => {
     const pipelineInput: SourceFile[] = await Promise.all(
       insertedFiles.map(async (row, i) => ({

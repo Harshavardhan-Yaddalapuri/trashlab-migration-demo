@@ -45,6 +45,11 @@ export const sourceFiles = pgTable("source_files", {
   fileName: text("file_name").notNull(),
   recordCount: integer("record_count").notNull().default(0),
   rawHash: text("raw_hash").notNull(),
+  /** Blob storage URL for the original file content. Kept as the audit
+   * trail for what was actually uploaded -- raw/normalized records aren't
+   * persisted per-row in Postgres, so this is how "what did the source
+   * data actually look like" stays answerable later. */
+  blobUrl: text("blob_url").notNull(),
   ingestedAt: timestamp("ingested_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
