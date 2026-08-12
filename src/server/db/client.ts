@@ -12,10 +12,11 @@ declare global {
 }
 
 function createPool(): Pool {
-  // Pipeline persistence runs several batch inserts concurrently per
-  // table (see pipeline-runner.ts's INSERT_CONCURRENCY); give the pool
-  // enough headroom for that plus normal request traffic.
-  return new Pool({ connectionString: databaseUrl(), max: 15 });
+  // Pipeline persistence runs one COPY stream per table (see
+  // pipeline-runner.ts's copyInsert) concurrently across 6 tables, plus
+  // normal request/polling traffic on top -- 10 gives headroom for both
+  // without over-requesting connections from Neon's pooled endpoint.
+  return new Pool({ connectionString: databaseUrl(), max: 10 });
 }
 
 const pool = globalThis.__trashlabPool ?? createPool();

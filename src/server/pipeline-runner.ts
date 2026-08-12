@@ -13,43 +13,49 @@
  * "values" }) yields the accumulated state after every node, so migration_jobs
  * is updated with real per-stage counts as the pipeline actually runs, instead
  * of jumping straight from "pending" to a fully-computed final state.
+ *
+ * Persistence uses Postgres COPY (not parameterized batch INSERTs): the
+ * platform's serverless function timeout is a hard budget shared by
+ * pipeline compute and persistence together, and at 150k-record scale
+ * (~500k+ rows across 6 tables) COPY is the only approach that reliably
+ * fits inside it -- batched INSERTs were ~5-10x slower and left the last
+ * table's rows unwritten with no error, just a job stuck at "committing".
  */
 
 import { eq } from "drizzle-orm";
+import { from as copyFrom } from "pg-copy-streams";
 import { buildMigrationGraph, initialState } from "@/pipeline/graph";
 import type { ExceptionIssue, MigrationStatus, ResolvedEntity, SourceFile } from "@/lib/types";
-import { db } from "@/server/db/client";
-import {
-  auditEvents,
-  exceptions,
-  migrationJobs,
-  normalizedRecords,
-  proposals,
-  rawRecords,
-  resolvedEntities,
-} from "@/server/db/schema";
+import { db, pool } from "@/server/db/client";
+import { migrationJobs } from "@/server/db/schema";
 
-// Postgres caps bind parameters at 65535 per statement; the widest table
-// here (exceptions) has 13 columns, so 3000 rows/batch stays comfortably
-// under that while cutting round-trips to Neon by 3x versus 1000.
-const INSERT_BATCH_SIZE = 3000;
-// Batches within one table's insert are independent (no ordering
-// dependency), so run several concurrently rather than one round-trip at
-// a time -- at 150k-record scale, sequential inserts alone can exceed the
-// function's time budget. Bounded well under the pg Pool's connection max.
-const INSERT_CONCURRENCY = 8;
+/** CSV-encodes one value for COPY ... FORMAT csv. Null/undefined become an
+ * unquoted empty field (COPY's CSV-mode NULL representation); everything
+ * else is quoted so numbers, dates, and JSON text all round-trip safely
+ * through the same code path without per-type special-casing. */
+function csvField(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  const str = value instanceof Date ? value.toISOString() : typeof value === "object" ? JSON.stringify(value) : String(value);
+  return `"${str.replace(/"/g, '""')}"`;
+}
 
-async function insertInBatches<T extends Record<string, unknown>>(
-  table: Parameters<typeof db.insert>[0],
-  rows: T[],
-): Promise<void> {
-  const chunks: T[][] = [];
-  for (let i = 0; i < rows.length; i += INSERT_BATCH_SIZE) {
-    chunks.push(rows.slice(i, i + INSERT_BATCH_SIZE));
-  }
-  for (let i = 0; i < chunks.length; i += INSERT_CONCURRENCY) {
-    const group = chunks.slice(i, i + INSERT_CONCURRENCY);
-    await Promise.all(group.map((chunk) => db.insert(table).values(chunk)));
+function csvRow(values: unknown[]): string {
+  return values.map(csvField).join(",") + "\n";
+}
+
+async function copyInsert<T>(tableName: string, columns: string[], rows: T[], rowToValues: (row: T) => unknown[]): Promise<void> {
+  if (rows.length === 0) return;
+  const client = await pool.connect();
+  try {
+    const stream = client.query(copyFrom(`COPY ${tableName} (${columns.join(", ")}) FROM STDIN WITH (FORMAT csv)`));
+    const csv = rows.map((row) => csvRow(rowToValues(row))).join("");
+    await new Promise<void>((resolve, reject) => {
+      stream.on("error", reject);
+      stream.on("finish", resolve);
+      stream.end(csv);
+    });
+  } finally {
+    client.release();
   }
 }
 
@@ -197,95 +203,97 @@ export async function runPipelineForJob(jobId: string, sourceFiles: SourceFile[]
 
   try {
     const resolvedById = new Map<string, ResolvedEntity>(final.resolved.map((r) => [r.id, r]));
-
-    await insertInBatches(
-      rawRecords,
-      final.rawRecords.map((r) => ({
-        id: r.id,
-        jobId,
-        sourceFileId: r.sourceFileId,
-        sourceRow: r.sourceRow,
-        payload: r.payload,
-        rawHash: r.rawHash,
-      })),
-    );
-
-    await insertInBatches(
-      normalizedRecords,
-      final.normalized.map((n) => ({
-        id: n.id,
-        jobId,
-        rawRecordId: n.rawRecordId,
-        entityType: n.entityType,
-        fields: n.fields,
-        normalizedAt: new Date(n.normalizedAt),
-      })),
-    );
-
-    await insertInBatches(
-      resolvedEntities,
-      final.resolved.map((r) => ({
-        id: r.id,
-        jobId,
-        entityType: r.entityType,
-        clusterId: r.clusterId,
-        confidence: r.confidence,
-        merged: r.merged,
-        canonicalFields: r.canonicalFields,
-      })),
-    );
-
-    await insertInBatches(
-      proposals,
-      final.proposals.map((p) => ({
-        id: p.id,
-        jobId,
-        resolvedEntityId: p.resolvedEntityId,
-        entityType: resolvedById.get(p.resolvedEntityId)?.entityType ?? "unknown",
-        targetTable: p.targetTable,
-        targetId: p.targetId,
-        confidence: p.confidence,
-        ruleVersion: p.ruleVersion,
-        status: p.status,
-        mappedFields: p.mappedFields ?? null,
-      })),
-    );
-
     const resolvedIds = new Set(resolvedById.keys());
-    await insertInBatches(
-      exceptions,
-      final.exceptions.map((e) => {
-        const resolvedEntityId = inferResolvedEntityId(e, resolvedIds);
-        const entity = resolvedEntityId ? resolvedById.get(resolvedEntityId) : undefined;
-        return {
-          id: e.id,
-          jobId,
-          type: e.type,
-          severity: e.severity,
-          summary: e.summary,
-          evidence: e.evidence,
-          suggestedFix: e.suggestedFix,
-          reviewStatus: e.reviewStatus,
-          resolvedEntityId,
-          confidence: entity?.confidence ?? 0,
-          sourceRecord: resolvedEntityId ?? "unknown",
-          createdAt: new Date(e.createdAt),
-          resolvedAt: e.resolvedAt ? new Date(e.resolvedAt) : null,
-        };
-      }),
-    );
 
-    await insertInBatches(
-      auditEvents,
-      final.audit.map((a) => ({
-        id: a.id,
+    // None of these six tables have a DB-level FK on each other (only on
+    // migration_jobs/source_files, already committed), so their COPY
+    // streams can run concurrently on separate connections instead of
+    // waiting on one another.
+    await Promise.all([
+      copyInsert("raw_records", ["id", "job_id", "source_file_id", "source_row", "payload", "raw_hash"], final.rawRecords, (r) => [
+        r.id,
         jobId,
-        type: a.type,
-        actor: a.actor,
-        payload: a.payload,
-        at: new Date(a.at),
-      })),
-    );
+        r.sourceFileId,
+        r.sourceRow,
+        r.payload,
+        r.rawHash,
+      ]),
+      copyInsert(
+        "normalized_records",
+        ["id", "job_id", "raw_record_id", "entity_type", "fields", "normalized_at"],
+        final.normalized,
+        (n) => [n.id, jobId, n.rawRecordId, n.entityType, n.fields, new Date(n.normalizedAt)],
+      ),
+      copyInsert(
+        "resolved_entities",
+        ["id", "job_id", "entity_type", "cluster_id", "confidence", "merged", "canonical_fields"],
+        final.resolved,
+        (r) => [r.id, jobId, r.entityType, r.clusterId, r.confidence, r.merged, r.canonicalFields],
+      ),
+      copyInsert(
+        "proposals",
+        ["id", "job_id", "resolved_entity_id", "entity_type", "target_table", "target_id", "confidence", "rule_version", "status", "mapped_fields"],
+        final.proposals,
+        (p) => [
+          p.id,
+          jobId,
+          p.resolvedEntityId,
+          resolvedById.get(p.resolvedEntityId)?.entityType ?? "unknown",
+          p.targetTable,
+          p.targetId,
+          p.confidence,
+          p.ruleVersion,
+          p.status,
+          p.mappedFields ?? null,
+        ],
+      ),
+      copyInsert(
+        "exceptions",
+        [
+          "id",
+          "job_id",
+          "type",
+          "severity",
+          "summary",
+          "evidence",
+          "suggested_fix",
+          "review_status",
+          "resolved_entity_id",
+          "confidence",
+          "source_record",
+          "created_at",
+          "resolved_at",
+        ],
+        final.exceptions,
+        (e) => {
+          const resolvedEntityId = inferResolvedEntityId(e, resolvedIds);
+          const entity = resolvedEntityId ? resolvedById.get(resolvedEntityId) : undefined;
+          return [
+            e.id,
+            jobId,
+            e.type,
+            e.severity,
+            e.summary,
+            e.evidence,
+            e.suggestedFix,
+            e.reviewStatus,
+            resolvedEntityId,
+            entity?.confidence ?? 0,
+            resolvedEntityId ?? "unknown",
+            new Date(e.createdAt),
+            e.resolvedAt ? new Date(e.resolvedAt) : null,
+          ];
+        },
+      ),
+      copyInsert("audit_events", ["id", "job_id", "type", "actor", "payload", "at"], final.audit, (a) => [
+        a.id,
+        jobId,
+        a.type,
+        a.actor,
+        a.payload,
+        new Date(a.at),
+      ]),
+    ]);
   } catch (err) {
     // Persistence failed partway through -- don't leave the job stuck at
     // "committing" forever with no way for a poller to know it died.
