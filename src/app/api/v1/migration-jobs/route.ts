@@ -13,7 +13,10 @@ import { migrationJobs, sourceFiles, tenants } from "@/server/db/schema";
 import { runPipelineForJob } from "@/server/pipeline-runner";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// The response itself returns almost immediately; this bounds the
+// after() callback that runs the pipeline and persists its output
+// (150k records means ~500 sequential chunked inserts to Postgres).
+export const maxDuration = 300;
 
 interface SourceFileInput {
   kind: SourceKind;

@@ -29,7 +29,10 @@ import {
   resolvedEntities,
 } from "@/server/db/schema";
 
-const INSERT_BATCH_SIZE = 1000;
+// Postgres caps bind parameters at 65535 per statement; the widest table
+// here (exceptions) has 13 columns, so 3000 rows/batch stays comfortably
+// under that while cutting round-trips to Neon by 3x versus 1000.
+const INSERT_BATCH_SIZE = 3000;
 
 async function insertInBatches<T extends Record<string, unknown>>(
   table: Parameters<typeof db.insert>[0],
