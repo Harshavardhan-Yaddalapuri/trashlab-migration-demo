@@ -1,15 +1,15 @@
 "use client";
 
 /**
- * Live sample view. Shows the cockpit shell with ~500 rows animating
- * through the pipeline. Progress bars fill incrementally. User advances
- * to full-batch view when ready.
+ * Live sample view. Shows the cockpit shell with the pipeline's real,
+ * streamed per-stage progress when a real job is present -- not a scripted
+ * animation. User advances to full-batch view when the job is done.
  *
  * Light theme, TrashLab design language, shared header with back nav.
  * No em-dashes in user-facing text.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useDemoStore } from "@/components/demo/demo-store";
 import { CockpitHeader } from "@/components/cockpit/cockpit-header";
 import { SourceSystemsPanel } from "@/components/cockpit/source-systems-panel";
@@ -18,7 +18,7 @@ import { ExceptionQueuePanel } from "@/components/cockpit/exception-queue-panel"
 import { formatCount } from "@/components/ui/format";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getMigrationJob } from "@/lib/api";
-import type { JobDetail } from "@/lib/api";
+import type { JobDetail, StageId, StageProgressMap } from "@/lib/api";
 import type {
   AgentStage,
   ConfidenceSummary,
@@ -28,6 +28,44 @@ import type {
 } from "@/components/cockpit/types";
 
 const TERMINAL_STATUSES = new Set(["completed", "failed"]);
+
+const STAGE_LABELS: Record<StageId, string> = {
+  intake: "Intake",
+  normalize: "Normalize",
+  resolve: "Entity Resolve",
+  map: "Map",
+  validate: "Validate",
+  review: "Review",
+  commit: "Commit",
+};
+
+const STAGE_STATUS: Record<StageId, AgentStage["status"]> = {
+  intake: "ingesting",
+  normalize: "normalizing",
+  resolve: "resolving",
+  map: "mapping",
+  validate: "validating",
+  review: "review",
+  commit: "committing",
+};
+
+const STAGE_ORDER: StageId[] = ["intake", "normalize", "resolve", "map", "validate", "review", "commit"];
+
+function realStages(stageProgress: StageProgressMap): AgentStage[] {
+  return STAGE_ORDER.map((id) => {
+    const entry = stageProgress[id];
+    return {
+      id,
+      label: STAGE_LABELS[id],
+      status: STAGE_STATUS[id],
+      progress: entry.total > 0 ? Math.min(1, entry.processed / entry.total) : entry.phase === "done" ? 1 : 0,
+      processed: entry.processed,
+      total: entry.total,
+      throughput: 0,
+      phase: entry.phase,
+    };
+  });
+}
 
 /** Map a real job's source files to the source-systems panel view model. */
 function realSources(job: JobDetail): SourceSystemView[] {
@@ -42,7 +80,7 @@ function realSources(job: JobDetail): SourceSystemView[] {
   }));
 }
 
-/** Stages for live sample (500 rows flowing). */
+/** Stages for the scripted fallback (500 rows flowing). */
 function buildSampleStages(tick: number): AgentStage[] {
   const sampleSize = 500;
   const progress = Math.min(1, tick / 20);
@@ -115,22 +153,29 @@ const SAMPLE_CONFIDENCE: ConfidenceSummary = {
   mean: 0.93,
 };
 
+const EMPTY_CONFIDENCE: ConfidenceSummary = { high: 0, medium: 0, low: 0, buckets: [], mean: 0 };
+
 export function LiveSampleView() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const jobId = searchParams.get("job");
   const [tick, setTick] = useState(0);
   const [job, setJob] = useState<JobDetail | null>(null);
+  const [liveEvents, setLiveEvents] = useState<PipelineEvent[]>([]);
+  const seenDoneStages = useRef<Set<StageId>>(new Set());
 
   useEffect(() => {
+    if (jobId) return; // real job drives its own timing
     if (tick >= 20) return;
     const timer = setTimeout(() => setTick((t) => t + 1), 150);
     return () => clearTimeout(timer);
-  }, [tick]);
+  }, [tick, jobId]);
 
   // Real job polling: while a real jobId is present, poll status every 1.5s
-  // until the pipeline reaches a terminal state. Falls back to the scripted
-  // tick animation if the API is unreachable or no jobId was created.
+  // until the pipeline reaches a terminal state, synthesizing a real
+  // activity-feed entry from actual stageProgress counts as each stage
+  // completes. Falls back to the scripted tick animation if the API is
+  // unreachable or no jobId was created.
   useEffect(() => {
     if (!jobId) return;
     let cancelled = false;
@@ -140,6 +185,27 @@ export function LiveSampleView() {
       const latest = await getMigrationJob(jobId);
       if (cancelled) return;
       if (latest) setJob(latest);
+
+      if (latest?.stageProgress) {
+        for (const id of STAGE_ORDER) {
+          const entry = latest.stageProgress[id];
+          if (entry.phase === "done" && !seenDoneStages.current.has(id)) {
+            seenDoneStages.current.add(id);
+            setLiveEvents((prev) => [
+              ...prev,
+              {
+                id: `stage-${id}`,
+                stageId: id,
+                type: "StageCompleted",
+                message: `${STAGE_LABELS[id]} complete: ${formatCount(entry.processed)}${entry.total ? ` / ${formatCount(entry.total)}` : ""} records.`,
+                at: new Date().toISOString(),
+                level: "info",
+              },
+            ]);
+          }
+        }
+      }
+
       if (!latest || !TERMINAL_STATUSES.has(latest.status)) {
         timer = setTimeout(poll, 1500);
       }
@@ -152,16 +218,19 @@ export function LiveSampleView() {
     };
   }, [jobId]);
 
-  const stages = buildSampleStages(tick);
   const hasRealJob = jobId !== null;
   const complete = hasRealJob ? job !== null && TERMINAL_STATUSES.has(job.status) : tick >= 20;
   const recordTotal = job ? job.sourceFiles.reduce((sum, f) => sum + f.recordCount, 0) : 500;
   const sources = job ? realSources(job) : SAMPLE_SOURCES;
+  const stages = job?.stageProgress ? realStages(job.stageProgress) : buildSampleStages(tick);
+  const events = hasRealJob ? liveEvents : SAMPLE_EVENTS;
+  const exceptions = hasRealJob ? [] : SAMPLE_EXCEPTIONS;
+  const confidence = hasRealJob ? EMPTY_CONFIDENCE : SAMPLE_CONFIDENCE;
 
   return (
     <div className="flex h-screen flex-col bg-white">
       <CockpitHeader
-        phaseLabel="Live Sample / 500 rows"
+        phaseLabel={`Live Sample / ${formatCount(recordTotal)} rows`}
         status={{ label: complete ? "sample complete" : "running", active: !complete }}
         right={
           <div className="flex items-center gap-4">
@@ -174,7 +243,7 @@ export function LiveSampleView() {
                 onClick={() => router.push(jobId ? `/migrate/batch?job=${jobId}` : "/migrate/batch")}
                 className="inline-flex items-center gap-2 rounded-full bg-[#10b981] px-5 py-2 text-xs font-semibold text-white transition-all hover:bg-[#0d9a6c]"
               >
-                Run full 150k batch
+                {hasRealJob ? `Run full batch (${formatCount(recordTotal)})` : "Run full 150k batch"}
                 <span aria-hidden>{"->"}</span>
               </button>
             )}
@@ -184,8 +253,8 @@ export function LiveSampleView() {
 
       <div className="grid flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[260px_1fr_320px]">
         <SourceSystemsPanel sources={sources} />
-        <PipelineActivityPanel stages={stages} events={SAMPLE_EVENTS} />
-        <ExceptionQueuePanel exceptions={SAMPLE_EXCEPTIONS} confidence={SAMPLE_CONFIDENCE} />
+        <PipelineActivityPanel stages={stages} events={events} />
+        <ExceptionQueuePanel exceptions={exceptions} confidence={confidence} />
       </div>
     </div>
   );

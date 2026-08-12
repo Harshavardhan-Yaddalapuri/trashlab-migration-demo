@@ -31,11 +31,21 @@ export interface JobSourceFile {
   ingestedAt: string;
 }
 
+export type StageId = "intake" | "normalize" | "resolve" | "map" | "validate" | "review" | "commit";
+export type StagePhase = "waiting" | "active" | "done";
+export interface StageProgressEntry {
+  processed: number;
+  total: number;
+  phase: StagePhase;
+}
+export type StageProgressMap = Record<StageId, StageProgressEntry>;
+
 export interface JobDetail {
   id: string;
   tenantId: string;
   status: string;
   progress: number;
+  stageProgress: StageProgressMap | null;
   createdAt: string;
   updatedAt: string;
   sourceFiles: JobSourceFile[];
@@ -52,6 +62,70 @@ export interface JobException {
   confidence: number;
   createdAt: string;
   resolvedAt: string | null;
+}
+
+export interface JobAuditEvent {
+  id: string;
+  type: string;
+  actor: string;
+  payload: Record<string, unknown>;
+  at: string;
+}
+
+function num(payload: Record<string, unknown>, key: string): number {
+  const value = payload[key];
+  return typeof value === "number" ? value : 0;
+}
+
+/** Turn a real audit event into the same past-tense activity-feed copy the scripted demo used, but with real numbers. */
+export function describeAuditEvent(event: JobAuditEvent): { message: string; level: "info" | "warn" | "error" } {
+  switch (event.type) {
+    case "JobStarted":
+      return { message: `Parsing ${num(event.payload, "sourceFileCount")} source file(s)...`, level: "info" };
+    case "SourceParsed": {
+      const errors = num(event.payload, "parseErrorCount");
+      return {
+        message: `Parsed source files, ${num(event.payload, "recordCount")} raw records ingested${errors > 0 ? ` (${errors} parse errors)` : ""}.`,
+        level: errors > 0 ? "warn" : "info",
+      };
+    }
+    case "RecordNormalized":
+      return {
+        message: `Normalized ${num(event.payload, "normalizedCount")} records. ${num(event.payload, "flaggedCount")} flagged.`,
+        level: "info",
+      };
+    case "CustomerResolved":
+      return {
+        message: `Resolved ${num(event.payload, "resolvedCount")} entities. ${num(event.payload, "autoMerged")} auto-merged, ${num(event.payload, "needsReview")} need review.`,
+        level: "info",
+      };
+    case "MappingProposed":
+      return {
+        message: `Mapped ${num(event.payload, "proposalCount")} proposals. ${num(event.payload, "exceptionCount")} exceptions raised.`,
+        level: "info",
+      };
+    case "ExceptionRaised":
+      return {
+        message: `Exception raised: ${String(event.payload.type ?? "unknown")} (${String(event.payload.severity ?? "info")}).`,
+        level: event.payload.severity === "critical" ? "error" : event.payload.severity === "warning" ? "warn" : "info",
+      };
+    case "JobCompleted": {
+      const failed = event.payload.failed === true;
+      return {
+        message: failed
+          ? `Job failed review: ${num(event.payload, "criticalExceptions")} critical exception(s) among ${num(event.payload, "exceptionCount")} total.`
+          : `Job completed. ${num(event.payload, "proposalCount")} proposals, ${num(event.payload, "exceptionCount")} exceptions.`,
+        level: failed ? "error" : "info",
+      };
+    }
+    default:
+      return { message: event.type, level: "info" };
+  }
+}
+
+export async function getJobAuditEvents(jobId: string): Promise<JobAuditEvent[] | null> {
+  const result = await safeFetch<{ events: JobAuditEvent[] }>(`/api/v1/migration-jobs/${jobId}/audit`);
+  return result?.events ?? null;
 }
 
 export interface JobReport {

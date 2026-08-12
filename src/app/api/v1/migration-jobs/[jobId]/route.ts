@@ -36,6 +36,7 @@ export async function GET(
       tenantId: job.tenantId,
       status: job.status,
       progress: job.progress,
+      stageProgress: job.stageProgress,
       createdAt: job.createdAt,
       updatedAt: job.updatedAt,
       sourceFiles: files.map((file) => ({

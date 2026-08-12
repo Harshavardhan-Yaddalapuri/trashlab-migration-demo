@@ -32,6 +32,7 @@ CREATE TABLE "migration_jobs" (
 	"tenant_id" uuid NOT NULL,
 	"status" text DEFAULT 'pending' NOT NULL,
 	"progress" integer DEFAULT 0 NOT NULL,
+	"stage_progress" jsonb,
 	"error" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL

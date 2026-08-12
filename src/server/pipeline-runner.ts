@@ -8,6 +8,11 @@
  * id ("exc-map-<resolvedEntityId>", "exc-<clusterId>"), which is how we
  * trace an exception back to the entity that raised it without touching
  * pipeline logic.
+ *
+ * Progress is streamed, not invoked atomically: graph.stream(..., { streamMode:
+ * "values" }) yields the accumulated state after every node, so migration_jobs
+ * is updated with real per-stage counts as the pipeline actually runs, instead
+ * of jumping straight from "pending" to a fully-computed final state.
  */
 
 import { eq } from "drizzle-orm";
@@ -61,6 +66,76 @@ function inferResolvedEntityId(exception: ExceptionIssue, resolvedIds: Set<strin
   return null;
 }
 
+type GraphState = ReturnType<typeof initialState>;
+
+export const STAGE_IDS = ["intake", "normalize", "resolve", "map", "validate", "review", "commit"] as const;
+export type StageId = (typeof STAGE_IDS)[number];
+export type StagePhase = "waiting" | "active" | "done";
+export interface StageProgressEntry {
+  processed: number;
+  total: number;
+  phase: StagePhase;
+}
+export type StageProgressMap = Record<StageId, StageProgressEntry>;
+
+/**
+ * Each node sets `status` to the name of the stage that JUST completed
+ * (see graph.ts: ingestNode -> "ingesting", etc). This maps that status to
+ * how many of the 7 UI stages are done.
+ */
+function completedStageIndex(status: MigrationStatus): number {
+  switch (status) {
+    case "ingesting":
+      return 0;
+    case "normalizing":
+      return 1;
+    case "resolving":
+      return 2;
+    case "mapping":
+      return 3;
+    case "validating":
+      return 4;
+    case "review":
+      return 5;
+    case "committing":
+    case "completed":
+    case "failed":
+      return 6;
+    default:
+      return -1;
+  }
+}
+
+function computeStageProgress(state: GraphState, totalRaw: number): StageProgressMap {
+  const doneThrough = completedStageIndex(state.status);
+
+  const processed: Record<StageId, number> = {
+    intake: state.rawRecords.length,
+    normalize: state.normalized.length,
+    resolve: state.resolved.length,
+    map: state.proposals.length,
+    validate: state.proposals.length,
+    review: state.exceptions.length,
+    commit: doneThrough >= 6 ? totalRaw : 0,
+  };
+  const total: Record<StageId, number> = {
+    intake: totalRaw,
+    normalize: state.rawRecords.length || totalRaw,
+    resolve: state.normalized.length || totalRaw,
+    map: state.resolved.length || totalRaw,
+    validate: state.proposals.length || 0,
+    review: state.exceptions.length || 0,
+    commit: totalRaw,
+  };
+
+  const map = {} as StageProgressMap;
+  STAGE_IDS.forEach((id, i) => {
+    const phase: StagePhase = i <= doneThrough ? "done" : i === doneThrough + 1 ? "active" : "waiting";
+    map[id] = { processed: processed[id], total: total[id], phase };
+  });
+  return map;
+}
+
 export interface PipelineRunResult {
   status: MigrationStatus;
   progress: number;
@@ -72,10 +147,31 @@ export interface PipelineRunResult {
 export async function runPipelineForJob(jobId: string, sourceFiles: SourceFile[]): Promise<PipelineRunResult> {
   const graph = buildMigrationGraph();
   const state = initialState(jobId, sourceFiles);
+  const totalRaw = sourceFiles.reduce((sum, f) => sum + f.recordCount, 0);
 
-  let final;
+  let final: GraphState | undefined;
   try {
-    final = await graph.invoke(state, { configurable: { thread_id: jobId } });
+    const stream = await graph.stream(state, {
+      configurable: { thread_id: jobId },
+      streamMode: "values",
+    });
+    for await (const snapshot of stream) {
+      final = snapshot as GraphState;
+      const stageProgress = computeStageProgress(final, totalRaw);
+      const isTerminal = final.status === "completed" || final.status === "failed";
+      // Don't report a terminal status until persistence below actually
+      // finishes -- otherwise pollers could see "completed" before the
+      // records/exceptions/report they'd fetch next actually exist.
+      await db
+        .update(migrationJobs)
+        .set({
+          status: isTerminal ? "committing" : final.status,
+          progress: isTerminal ? 95 : Math.round(final.progress * 100),
+          stageProgress,
+          updatedAt: new Date(),
+        })
+        .where(eq(migrationJobs.id, jobId));
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await db
@@ -83,6 +179,10 @@ export async function runPipelineForJob(jobId: string, sourceFiles: SourceFile[]
       .set({ status: "failed", error: message, updatedAt: new Date() })
       .where(eq(migrationJobs.id, jobId));
     throw err;
+  }
+
+  if (!final) {
+    throw new Error(`pipeline produced no state for job ${jobId}`);
   }
 
   const resolvedById = new Map<string, ResolvedEntity>(final.resolved.map((r) => [r.id, r]));
@@ -181,6 +281,7 @@ export async function runPipelineForJob(jobId: string, sourceFiles: SourceFile[]
     .set({
       status: final.status,
       progress: Math.round(final.progress * 100),
+      stageProgress: computeStageProgress(final, totalRaw),
       error: final.error ?? null,
       updatedAt: new Date(),
     })

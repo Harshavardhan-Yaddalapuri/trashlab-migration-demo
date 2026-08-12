@@ -84,10 +84,7 @@ describe("ReportView", () => {
   it("renders the closing statement", () => {
     render(<ReportView />);
     expect(
-      screen.getByText(/I ran 15 agents to build this overnight/i),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/Imagine what I would do with yours/i),
+      screen.getByText(/Migration data is ready for go-live/i),
     ).toBeInTheDocument();
   });
 

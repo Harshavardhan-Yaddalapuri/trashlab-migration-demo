@@ -27,6 +27,8 @@ export const migrationJobs = pgTable(
       .references(() => tenants.id),
     status: text("status").notNull().default("pending"),
     progress: integer("progress").notNull().default(0),
+    /** Real per-stage counts, updated as the pipeline streams through each node. */
+    stageProgress: jsonb("stage_progress"),
     error: text("error"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

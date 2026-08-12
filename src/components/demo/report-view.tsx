@@ -365,14 +365,24 @@ export function ReportView() {
             </div>
           </section>
 
-          {/* The ask */}
+          {/* Migration ready */}
           <section className="rounded-2xl border border-[#10b981]/30 bg-[#10b981]/5 p-8 text-center">
             <p className="text-xl font-bold leading-tight text-[#1a174f]">
-              I ran 15 agents to build this overnight.
+              Migration data is ready for go-live.
             </p>
-            <p className="mt-2 text-xl font-bold leading-tight text-[#10b981]">
-              Imagine what I would do with yours.
+            <p className="mt-2 text-sm text-[#6260af]">
+              Every record, exception, and decision above is backed by the audit trail. Export the full
+              report for finance or ops sign-off.
             </p>
+            {jobId && (
+              <a
+                href={`/api/jobs/${jobId}/report/csv`}
+                download
+                className="mt-5 inline-flex items-center gap-2 rounded-full bg-[#312d97] px-6 py-2.5 text-sm font-semibold text-white transition-all hover:bg-[#5149d7]"
+              >
+                Download Full Report (CSV)
+              </a>
+            )}
           </section>
         </div>
       </main>

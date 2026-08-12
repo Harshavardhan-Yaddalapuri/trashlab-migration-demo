@@ -1,5 +1,5 @@
 {
-  "id": "2a17f978-7bc0-4c52-bdf4-49a3eb2c37fa",
+  "id": "b6260d92-642b-4f97-8fcb-b275a0171c89",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -277,6 +277,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": 0
+        },
+        "stage_progress": {
+          "name": "stage_progress",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
         },
         "error": {
           "name": "error",

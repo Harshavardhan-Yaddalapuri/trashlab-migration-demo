@@ -1,16 +1,17 @@
 "use client";
 
 /**
- * Full batch view. Shows the full 150k records flowing through the pipeline
- * with per-agent throughput. All stages animate to completion over ~24s
- * so the fleet visibly works. User advances to exception review when done.
+ * Full batch view. Shows the full batch flowing through the pipeline with
+ * per-stage progress. When a real job is present, every number here comes
+ * from the pipeline's actual streamed progress, persisted audit trail, and
+ * exceptions -- not a scripted animation. Falls back to the scripted demo
+ * only when there is no real job or the API is unreachable.
  *
  * Light theme, TrashLab design language, shared header with back nav.
- * Real timestamps generated relative to now.
  * No em-dashes in user-facing text.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useDemoStore } from "@/components/demo/demo-store";
 import { CockpitHeader } from "@/components/cockpit/cockpit-header";
 import { SourceSystemsPanel } from "@/components/cockpit/source-systems-panel";
@@ -18,8 +19,14 @@ import { PipelineActivityPanel } from "@/components/cockpit/pipeline-activity-pa
 import { ExceptionQueuePanel } from "@/components/cockpit/exception-queue-panel";
 import { formatCount } from "@/components/ui/format";
 import { useRouter, useSearchParams } from "next/navigation";
-import { getJobExceptions, getMigrationJob } from "@/lib/api";
-import type { JobDetail, JobException } from "@/lib/api";
+import {
+  describeAuditEvent,
+  getJobAuditEvents,
+  getJobExceptions,
+  getJobReport,
+  getMigrationJob,
+} from "@/lib/api";
+import type { JobDetail, JobException, JobReport, StageId, StageProgressMap } from "@/lib/api";
 import type {
   AgentStage,
   ConfidenceSummary,
@@ -29,6 +36,44 @@ import type {
 } from "@/components/cockpit/types";
 
 const TERMINAL_STATUSES = new Set(["completed", "failed"]);
+
+const STAGE_LABELS: Record<StageId, string> = {
+  intake: "Intake",
+  normalize: "Normalize",
+  resolve: "Entity Resolve",
+  map: "Map",
+  validate: "Validate",
+  review: "Review",
+  commit: "Commit",
+};
+
+const STAGE_STATUS: Record<StageId, AgentStage["status"]> = {
+  intake: "ingesting",
+  normalize: "normalizing",
+  resolve: "resolving",
+  map: "mapping",
+  validate: "validating",
+  review: "review",
+  commit: "committing",
+};
+
+const STAGE_ORDER: StageId[] = ["intake", "normalize", "resolve", "map", "validate", "review", "commit"];
+
+function realStages(stageProgress: StageProgressMap): AgentStage[] {
+  return STAGE_ORDER.map((id) => {
+    const entry = stageProgress[id];
+    return {
+      id,
+      label: STAGE_LABELS[id],
+      status: STAGE_STATUS[id],
+      progress: entry.total > 0 ? Math.min(1, entry.processed / entry.total) : entry.phase === "done" ? 1 : 0,
+      processed: entry.processed,
+      total: entry.total,
+      throughput: 0,
+      phase: entry.phase,
+    };
+  });
+}
 
 function realSources(job: JobDetail): SourceSystemView[] {
   const done = TERMINAL_STATUSES.has(job.status);
@@ -48,11 +93,31 @@ function toQueueItem(e: JobException): ExceptionQueueItem {
     type: e.type,
     severity: e.severity,
     summary: e.summary,
-    confidence: 0,
+    confidence: e.confidence,
     reviewStatus: e.reviewStatus,
     suggestedFix: e.suggestedFix,
   };
 }
+
+function reportToConfidence(report: JobReport): ConfidenceSummary {
+  const high = report.confidenceHistogram.slice(9, 10).reduce((sum, b) => sum + b.count, 0);
+  const medium = report.confidenceHistogram.slice(7, 9).reduce((sum, b) => sum + b.count, 0);
+  const low = report.confidenceHistogram.slice(0, 7).reduce((sum, b) => sum + b.count, 0);
+  const total = high + medium + low;
+  const mean =
+    total === 0
+      ? 0
+      : report.confidenceHistogram.reduce((sum, b, i) => sum + (i * 0.1 + 0.05) * b.count, 0) / total;
+  return {
+    high,
+    medium,
+    low,
+    buckets: report.confidenceHistogram.map((b, i) => ({ lower: i * 0.1, count: b.count })),
+    mean,
+  };
+}
+
+const EMPTY_CONFIDENCE: ConfidenceSummary = { high: 0, medium: 0, low: 0, buckets: [], mean: 0 };
 
 const TOTAL_TICKS = 40; // 40 * 600ms = 24s of visible fleet work
 
@@ -150,9 +215,14 @@ export function FullBatchView() {
   const [tick, setTick] = useState(0);
   const [job, setJob] = useState<JobDetail | null>(null);
   const [realExceptions, setRealExceptions] = useState<JobException[] | null>(null);
+  const [realReport, setRealReport] = useState<JobReport | null>(null);
+  const [liveEvents, setLiveEvents] = useState<PipelineEvent[]>([]);
+  const seenDoneStages = useRef<Set<StageId>>(new Set());
 
-  // Real job polling: while a real jobId is present, poll status every 1.5s
-  // until the pipeline reaches a terminal state, then fetch its exceptions.
+  // Real job polling: while a real jobId is present, poll status every 1.5s.
+  // As each pipeline stage completes, synthesize a real activity-feed entry
+  // from the actual stageProgress counts. Once the job reaches a terminal
+  // state, fetch its real exceptions, report, and persisted audit trail.
   // Falls back to the scripted tick animation if the API is unreachable.
   useEffect(() => {
     if (!jobId) return;
@@ -162,12 +232,46 @@ export function FullBatchView() {
     const poll = async () => {
       const latest = await getMigrationJob(jobId);
       if (cancelled) return;
+
+      if (latest?.stageProgress) {
+        for (const id of STAGE_ORDER) {
+          const entry = latest.stageProgress[id];
+          if (entry.phase === "done" && !seenDoneStages.current.has(id)) {
+            seenDoneStages.current.add(id);
+            setLiveEvents((prev) => [
+              ...prev,
+              {
+                id: `stage-${id}`,
+                stageId: id,
+                type: "StageCompleted",
+                message: `${STAGE_LABELS[id]} complete: ${formatCount(entry.processed)}${entry.total ? ` / ${formatCount(entry.total)}` : ""} records.`,
+                at: new Date().toISOString(),
+                level: "info",
+              },
+            ]);
+          }
+        }
+      }
+
       if (latest && TERMINAL_STATUSES.has(latest.status)) {
-        // Fetch exceptions before flipping to "complete" so the header
-        // count and exception list never show a stale/zero value.
-        const excs = await getJobExceptions(jobId);
+        // Fetch exceptions/report/audit before flipping to "complete" so
+        // the header count and panels never show a stale/zero value.
+        const [excs, report, audit] = await Promise.all([
+          getJobExceptions(jobId),
+          getJobReport(jobId),
+          getJobAuditEvents(jobId),
+        ]);
         if (cancelled) return;
         setRealExceptions(excs);
+        setRealReport(report);
+        if (audit) {
+          setLiveEvents(
+            audit.map((e) => {
+              const { message, level } = describeAuditEvent(e);
+              return { id: e.id, stageId: "commit", type: e.type, message, at: e.at, level };
+            }),
+          );
+        }
         setJob(latest);
       } else {
         if (latest) setJob(latest);
@@ -182,9 +286,9 @@ export function FullBatchView() {
     };
   }, [jobId]);
 
-  // Real timestamps: events fire at relative offsets from mount
+  // Scripted fallback timestamps: events fire at relative offsets from mount
   const [startTime] = useState(() => Date.now());
-  const events: PipelineEvent[] = useMemo(() => {
+  const scriptedEvents: PipelineEvent[] = useMemo(() => {
     const at = (offsetSec: number) => new Date(startTime + offsetSec * 1000).toISOString();
     return [
       { id: "evt-f1", stageId: "intake", type: "SourceParsed", message: "Parsed 4 source files, 150,000 raw records ingested", at: at(1), level: "info" },
@@ -198,28 +302,32 @@ export function FullBatchView() {
   }, [startTime]);
 
   useEffect(() => {
+    if (jobId) return; // real job drives its own timing
     if (tick >= TOTAL_TICKS) return;
     const timer = setTimeout(() => setTick((t) => t + 1), 600);
     return () => clearTimeout(timer);
-  }, [tick]);
+  }, [tick, jobId]);
 
-  const stages = buildFullStages(tick);
   const hasRealJob = jobId !== null;
   const complete = hasRealJob ? job !== null && TERMINAL_STATUSES.has(job.status) : tick >= TOTAL_TICKS;
 
-  // Show exceptions progressively (scripted) or the real count once known.
   const scriptedExceptionCount = Math.round(1501 * Math.min(1, tick / TOTAL_TICKS));
-  const exceptionCount = realExceptions ? realExceptions.length : scriptedExceptionCount;
+  const exceptionCount = realExceptions ? realExceptions.length : hasRealJob ? 0 : scriptedExceptionCount;
   const recordTotal = job ? job.sourceFiles.reduce((sum, f) => sum + f.recordCount, 0) : 150_000;
   const sources = job ? realSources(job) : FULL_SOURCES;
+  const stages = job?.stageProgress ? realStages(job.stageProgress) : buildFullStages(tick);
+  const events = hasRealJob ? liveEvents : scriptedEvents;
+  const confidence = realReport ? reportToConfidence(realReport) : hasRealJob ? EMPTY_CONFIDENCE : FULL_CONFIDENCE;
   const visibleExceptions: ExceptionQueueItem[] = realExceptions
     ? realExceptions.slice(0, 8).map(toQueueItem)
-    : COMPLETE_EXCEPTIONS.slice(0, Math.min(COMPLETE_EXCEPTIONS.length, Math.ceil(scriptedExceptionCount / 188)));
+    : hasRealJob
+      ? []
+      : COMPLETE_EXCEPTIONS.slice(0, Math.min(COMPLETE_EXCEPTIONS.length, Math.ceil(scriptedExceptionCount / 188)));
 
   return (
     <div className="flex h-screen flex-col bg-white">
       <CockpitHeader
-        phaseLabel="Full Batch / 150,000 records"
+        phaseLabel={`Full Batch / ${formatCount(recordTotal)} records`}
         status={{ label: complete ? "batch complete" : "running", active: !complete }}
         right={
           <div className="flex items-center gap-4">
@@ -247,7 +355,7 @@ export function FullBatchView() {
       <div className="grid flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[260px_1fr_320px]">
         <SourceSystemsPanel sources={sources} />
         <PipelineActivityPanel stages={stages} events={events} />
-        <ExceptionQueuePanel exceptions={visibleExceptions} confidence={FULL_CONFIDENCE} />
+        <ExceptionQueuePanel exceptions={visibleExceptions} confidence={confidence} />
       </div>
     </div>
   );
