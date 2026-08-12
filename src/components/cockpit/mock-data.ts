@@ -1,0 +1,270 @@
+/**
+ * Mock data for the cockpit UI. Provides realistic source systems,
+ * pipeline events, agent stages, exceptions, and confidence distributions
+ * that match the 150k-record demo dataset from the design doc.
+ */
+
+import type {
+  AgentStage,
+  ConfidenceBucket,
+  ConfidenceSummary,
+  ExceptionQueueItem,
+  PipelineEvent,
+  SourceSystemView,
+} from "@/components/cockpit/types";
+
+/** Source systems for the left pane. */
+export const mockSourceSystems: SourceSystemView[] = [
+  {
+    id: "src-routepro",
+    kind: "routepro-csv",
+    fileName: "routepro_2019_export.csv",
+    recordCount: 78_000,
+    status: "parsed",
+    parseErrors: 0,
+  },
+  {
+    id: "src-quickbooks",
+    kind: "quickbooks-export",
+    fileName: "quickbooks_customer_export.tsv",
+    recordCount: 45_000,
+    status: "parsed",
+    parseErrors: 0,
+  },
+  {
+    id: "src-transfer",
+    kind: "transfer-spreadsheet",
+    fileName: "transfer_station_weights.xlsx",
+    recordCount: 20_000,
+    status: "parsed",
+    parseErrors: 3,
+  },
+  {
+    id: "src-legacy",
+    kind: "legacy-export",
+    fileName: "legacy_paper_export.tab",
+    recordCount: 7_000,
+    status: "parsed",
+    parseErrors: 12,
+  },
+];
+
+/** Agent stages for the center pane pipeline. */
+export const mockAgentStages: AgentStage[] = [
+  {
+    id: "intake",
+    label: "Intake",
+    status: "ingesting",
+    progress: 1,
+    processed: 150_000,
+    total: 150_000,
+    throughput: 32_000,
+    phase: "done",
+  },
+  {
+    id: "normalize",
+    label: "Normalize",
+    status: "normalizing",
+    progress: 1,
+    processed: 150_000,
+    total: 150_000,
+    throughput: 28_000,
+    phase: "done",
+  },
+  {
+    id: "resolve",
+    label: "Entity Resolve",
+    status: "resolving",
+    progress: 1,
+    processed: 45_000,
+    total: 45_000,
+    throughput: 14_000,
+    phase: "done",
+  },
+  {
+    id: "map",
+    label: "Map",
+    status: "mapping",
+    progress: 0.92,
+    processed: 138_000,
+    total: 150_000,
+    throughput: 9_500,
+    phase: "active",
+  },
+  {
+    id: "validate",
+    label: "Validate",
+    status: "validating",
+    progress: 0,
+    processed: 0,
+    total: 150_000,
+    throughput: 0,
+    phase: "waiting",
+  },
+  {
+    id: "review",
+    label: "Review",
+    status: "review",
+    progress: 0,
+    processed: 0,
+    total: 1_501,
+    throughput: 0,
+    phase: "waiting",
+  },
+  {
+    id: "commit",
+    label: "Commit",
+    status: "committing",
+    progress: 0,
+    processed: 0,
+    total: 150_000,
+    throughput: 0,
+    phase: "waiting",
+  },
+];
+
+/** Live activity feed events for the center pane. */
+export const mockPipelineEvents: PipelineEvent[] = [
+  {
+    id: "evt-001",
+    stageId: "intake",
+    type: "SourceParsed",
+    message: "Parsed 4 source files, 150,000 raw records ingested",
+    at: "2026-08-12T04:01:12.000Z",
+    level: "info",
+  },
+  {
+    id: "evt-002",
+    stageId: "normalize",
+    type: "RecordNormalized",
+    message: "Normalized 150,000 records. 423 date ambiguities flagged.",
+    at: "2026-08-12T04:01:18.000Z",
+    level: "info",
+  },
+  {
+    id: "evt-003",
+    stageId: "resolve",
+    type: "CustomerResolved",
+    message: "Resolved 45,000 customers. 2,200 duplicate clusters found.",
+    at: "2026-08-12T04:01:25.000Z",
+    level: "info",
+  },
+  {
+    id: "evt-004",
+    stageId: "resolve",
+    type: "CustomerAutoMerged",
+    message: "Auto-merged 2,000 clusters above 0.90 confidence.",
+    at: "2026-08-12T04:01:26.000Z",
+    level: "info",
+  },
+  {
+    id: "evt-005",
+    stageId: "map",
+    type: "MappingProposed",
+    message: "Mapping 138,000 of 150,000 records. 99.2% auto-map rate.",
+    at: "2026-08-12T04:01:35.000Z",
+    level: "info",
+  },
+  {
+    id: "evt-006",
+    stageId: "map",
+    type: "ExceptionRaised",
+    message: "Pricing conflict: agreement A-04231 has two rates for same container+site.",
+    at: "2026-08-12T04:01:37.000Z",
+    level: "warn",
+  },
+  {
+    id: "evt-007",
+    stageId: "map",
+    type: "ExceptionRaised",
+    message: "Unmappable service code 'NOPE-1' on agreement A-08992.",
+    at: "2026-08-12T04:01:38.000Z",
+    level: "warn",
+  },
+  {
+    id: "evt-008",
+    stageId: "validate",
+    type: "ExceptionRaised",
+    message: "Orphan container RC-33109 has no owning site.",
+    at: "2026-08-12T04:01:40.000Z",
+    level: "error",
+  },
+];
+
+/** Exception queue items for the right pane. */
+export const mockExceptionQueue: ExceptionQueueItem[] = [
+  {
+    id: "exc-001",
+    type: "pricing_conflict",
+    severity: "critical",
+    summary: "Agreement A-04231: two rates ($300 vs $450) for same container+site",
+    confidence: 0.97,
+    reviewStatus: "open",
+    suggestedFix: "Use most recent rate from QuickBooks export ($450/mo).",
+  },
+  {
+    id: "exc-002",
+    type: "orphan_container",
+    severity: "warning",
+    summary: "Container RC-33109 has no owning site assignment",
+    confidence: 0.88,
+    reviewStatus: "open",
+    suggestedFix: "Assign to nearest yard site S-02104 (Springfield West).",
+  },
+  {
+    id: "exc-003",
+    type: "unmappable_code",
+    severity: "warning",
+    summary: "Service code 'NOPE-1' on agreement A-08992 has no mapping rule",
+    confidence: 0.82,
+    reviewStatus: "open",
+    suggestedFix: "Map to SW-RO-30YD based on container size analysis.",
+  },
+  {
+    id: "exc-004",
+    type: "closed_unbilled",
+    severity: "info",
+    summary: "Agreement A-01567 closed 2026-03-01 but unbilled for 2 months",
+    confidence: 0.94,
+    reviewStatus: "open",
+    suggestedFix: "Generate back-invoice for Mar-Apr at agreed rate.",
+  },
+  {
+    id: "exc-005",
+    type: "duplicate_customer",
+    severity: "warning",
+    summary: "'Summit Construction LLC' and 'S. Construction' share address+phone",
+    confidence: 0.91,
+    reviewStatus: "open",
+    suggestedFix: "Merge into canonical record C-00231.",
+  },
+  {
+    id: "exc-006",
+    type: "ungeocodable",
+    severity: "info",
+    summary: "Site S-04823 has PO Box address, cannot geocode",
+    confidence: 0.99,
+    reviewStatus: "open",
+    suggestedFix: "Request physical address from customer.",
+  },
+];
+
+/** Confidence summary for the right pane meters. */
+export const mockConfidenceSummary: ConfidenceSummary = {
+  high: 136_500,
+  medium: 11_800,
+  low: 1_700,
+  buckets: [
+    { lower: 0.0, count: 850 },
+    { lower: 0.1, count: 420 },
+    { lower: 0.2, count: 180 },
+    { lower: 0.3, count: 250 },
+    { lower: 0.4, count: 0 },
+    { lower: 0.5, count: 0 },
+    { lower: 0.6, count: 0 },
+    { lower: 0.7, count: 3_200 },
+    { lower: 0.8, count: 8_600 },
+    { lower: 0.9, count: 136_500 },
+  ],
+  mean: 0.94,
+};
