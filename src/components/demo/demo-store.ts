@@ -1,13 +1,22 @@
+"use client";
+
 /**
- * Zustand store for the 90-second demo flow.
- * Paces: landing -> file-drop -> live-sample -> full-batch -> exception-review -> report.
- * Each phase transition is manual (click) or auto-advance via startDemo().
- * The store is the single source of truth for which view to render.
+ * Demo store. The URL is the single source of truth for the demo phase.
+ * Each phase maps to a real route:
+ *   /                    -> landing
+ *   /migrate             -> file-drop
+ *   /migrate/live        -> live-sample
+ *   /migrate/batch       -> full-batch
+ *   /migrate/review      -> exception-review
+ *   /migrate/report      -> report
+ *
+ * The store keeps a small amount of UI state (isRunning) and exposes
+ * navigation helpers that push real URLs, so browser back/forward and
+ * deep links work.
  */
 
 import { create } from "zustand";
 
-/** The phases of the demo flow, in order. */
 export type DemoPhase =
   | "landing"
   | "file-drop"
@@ -16,26 +25,35 @@ export type DemoPhase =
   | "exception-review"
   | "report";
 
-/** Ordered list of phases for sequential advance. */
-const PHASE_ORDER: DemoPhase[] = [
-  "landing",
-  "file-drop",
-  "live-sample",
-  "full-batch",
-  "exception-review",
-  "report",
-];
+export const PHASE_TO_PATH: Record<DemoPhase, string> = {
+  landing: "/",
+  "file-drop": "/migrate",
+  "live-sample": "/migrate/live",
+  "full-batch": "/migrate/batch",
+  "exception-review": "/migrate/review",
+  report: "/migrate/report",
+};
+
+export const PATH_TO_PHASE: Record<string, DemoPhase> = {
+  "/": "landing",
+  "/migrate": "file-drop",
+  "/migrate/live": "live-sample",
+  "/migrate/batch": "full-batch",
+  "/migrate/review": "exception-review",
+  "/migrate/report": "report",
+};
+
+export function phaseFromPath(pathname: string): DemoPhase {
+  return PATH_TO_PHASE[pathname] ?? "landing";
+}
 
 interface DemoState {
   phase: DemoPhase;
-  /** True when the demo is actively running (vs manually navigating). */
   isRunning: boolean;
-  /** Advance to the next phase in the ordered list. */
-  advance: () => void;
-  /** Jump to a specific phase. */
-  goTo: (phase: DemoPhase) => void;
-  /** Start the demo from the beginning (file-drop). */
-  startDemo: () => void;
+  /** Set the phase from the current URL (called by the router-driven shell). */
+  syncFromPath: (pathname: string) => void;
+  /** Mark the demo as running (used by the landing CTA before navigation). */
+  markRunning: () => void;
   /** Reset back to the landing page. */
   reset: () => void;
 }
@@ -43,23 +61,8 @@ interface DemoState {
 export const useDemoStore = create<DemoState>((set) => ({
   phase: "landing",
   isRunning: false,
-  advance: () =>
-    set((state) => {
-      const idx = PHASE_ORDER.indexOf(state.phase);
-      const next = idx < PHASE_ORDER.length - 1 ? PHASE_ORDER[idx + 1] : state.phase;
-      return { phase: next, isRunning: next !== "landing" };
-    }),
-  goTo: (phase) => set({ phase, isRunning: phase !== "landing" }),
-  startDemo: () => set({ phase: "file-drop", isRunning: true }),
+  syncFromPath: (pathname) =>
+    set({ phase: phaseFromPath(pathname), isRunning: phaseFromPath(pathname) !== "landing" }),
+  markRunning: () => set({ isRunning: true }),
   reset: () => set({ phase: "landing", isRunning: false }),
 }));
-
-/** Phase metadata for display. */
-export const PHASE_LABELS: Record<DemoPhase, string> = {
-  landing: "Start",
-  "file-drop": "File Drop",
-  "live-sample": "Live Sample",
-  "full-batch": "Full Batch",
-  "exception-review": "Exception Review",
-  report: "Report",
-};

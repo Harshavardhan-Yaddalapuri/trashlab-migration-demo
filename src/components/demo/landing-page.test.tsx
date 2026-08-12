@@ -56,11 +56,10 @@ describe("LandingPage", () => {
     expect(screen.queryByText("Eval")).not.toBeInTheDocument();
   });
 
-  it("clicking start button advances to file-drop phase", () => {
+  it("clicking start button marks the demo as running", () => {
     render(<LandingPage />);
     const button = screen.getByText(/See It In Action/i);
     fireEvent.click(button);
-    expect(useDemoStore.getState().phase).toBe("file-drop");
     expect(useDemoStore.getState().isRunning).toBe(true);
   });
 

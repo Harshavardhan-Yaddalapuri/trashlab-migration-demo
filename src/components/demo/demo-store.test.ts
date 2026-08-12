@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { useDemoStore, PHASE_LABELS } from "@/components/demo/demo-store";
+import { useDemoStore, PHASE_TO_PATH, PATH_TO_PHASE, phaseFromPath } from "@/components/demo/demo-store";
 
 describe("demo-store", () => {
   beforeEach(() => {
@@ -11,47 +11,49 @@ describe("demo-store", () => {
     expect(useDemoStore.getState().isRunning).toBe(false);
   });
 
-  it("startDemo sets phase to file-drop", () => {
-    useDemoStore.getState().startDemo();
+  it("syncFromPath maps each URL to the right phase", () => {
+    const { syncFromPath } = useDemoStore.getState();
+    syncFromPath("/");
+    expect(useDemoStore.getState().phase).toBe("landing");
+    syncFromPath("/migrate");
     expect(useDemoStore.getState().phase).toBe("file-drop");
-    expect(useDemoStore.getState().isRunning).toBe(true);
-  });
-
-  it("advance moves through all phases in order", () => {
-    const { advance } = useDemoStore.getState();
-    advance(); // landing -> file-drop
-    expect(useDemoStore.getState().phase).toBe("file-drop");
-    advance(); // file-drop -> live-sample
+    syncFromPath("/migrate/live");
     expect(useDemoStore.getState().phase).toBe("live-sample");
-    advance(); // live-sample -> full-batch
+    syncFromPath("/migrate/batch");
     expect(useDemoStore.getState().phase).toBe("full-batch");
-    advance(); // full-batch -> exception-review
+    syncFromPath("/migrate/review");
     expect(useDemoStore.getState().phase).toBe("exception-review");
-    advance(); // exception-review -> report
+    syncFromPath("/migrate/report");
     expect(useDemoStore.getState().phase).toBe("report");
   });
 
-  it("advance stays on report at the end", () => {
-    useDemoStore.getState().goTo("report");
-    useDemoStore.getState().advance();
-    expect(useDemoStore.getState().phase).toBe("report");
+  it("syncFromPath sets isRunning for non-landing phases", () => {
+    useDemoStore.getState().syncFromPath("/migrate");
+    expect(useDemoStore.getState().isRunning).toBe(true);
+    useDemoStore.getState().syncFromPath("/");
+    expect(useDemoStore.getState().isRunning).toBe(false);
   });
 
-  it("goTo jumps to a specific phase", () => {
-    useDemoStore.getState().goTo("exception-review");
-    expect(useDemoStore.getState().phase).toBe("exception-review");
+  it("syncFromPath falls back to landing for unknown paths", () => {
+    useDemoStore.getState().syncFromPath("/migrate/report");
+    useDemoStore.getState().syncFromPath("/totally-unknown");
+    expect(useDemoStore.getState().phase).toBe("landing");
+  });
+
+  it("markRunning sets isRunning true", () => {
+    useDemoStore.getState().markRunning();
     expect(useDemoStore.getState().isRunning).toBe(true);
   });
 
   it("reset returns to landing", () => {
-    useDemoStore.getState().goTo("report");
+    useDemoStore.getState().syncFromPath("/migrate/report");
     useDemoStore.getState().reset();
     expect(useDemoStore.getState().phase).toBe("landing");
     expect(useDemoStore.getState().isRunning).toBe(false);
   });
 
-  it("PHASE_LABELS has all 6 phases", () => {
-    const phases = Object.keys(PHASE_LABELS);
+  it("PHASE_TO_PATH has all 6 phases", () => {
+    const phases = Object.keys(PHASE_TO_PATH);
     expect(phases).toHaveLength(6);
     expect(phases).toContain("landing");
     expect(phases).toContain("file-drop");
@@ -61,10 +63,13 @@ describe("demo-store", () => {
     expect(phases).toContain("report");
   });
 
-  it("goTo to landing sets isRunning to false", () => {
-    useDemoStore.getState().goTo("report");
-    expect(useDemoStore.getState().isRunning).toBe(true);
-    useDemoStore.getState().goTo("landing");
-    expect(useDemoStore.getState().isRunning).toBe(false);
+  it("PATH_TO_PHASE round-trips with PHASE_TO_PATH", () => {
+    for (const [phase, path] of Object.entries(PHASE_TO_PATH)) {
+      expect(PATH_TO_PHASE[path]).toBe(phase);
+    }
+  });
+
+  it("phaseFromPath returns landing for unknown", () => {
+    expect(phaseFromPath("/nope")).toBe("landing");
   });
 });

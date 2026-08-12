@@ -19,12 +19,19 @@
 
 import { useDemoStore } from "@/components/demo/demo-store";
 import { config } from "@/lib/config";
+import { useRouter } from "next/navigation";
 
 const FAQ_QUOTE =
   "Implementation depends on the size of your operation. Larger fleets with multiple yards, recurring routes, and existing software take longer because clean data migration, training, and rollout matter more than going fast.";
 
 export function LandingPage() {
-  const startDemo = useDemoStore((s) => s.startDemo);
+  const router = useRouter();
+  const markRunning = useDemoStore((s) => s.markRunning);
+
+  const startDemo = () => {
+    markRunning();
+    router.push("/migrate");
+  };
 
   return (
     <div className="flex min-h-screen flex-col bg-white text-slate-900">

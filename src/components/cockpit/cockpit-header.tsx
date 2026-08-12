@@ -6,7 +6,7 @@
  * No em-dashes in user-facing text.
  */
 
-import { useDemoStore } from "@/components/demo/demo-store";
+import { useRouter } from "next/navigation";
 
 interface CockpitHeaderProps {
   phaseLabel: string;
@@ -16,9 +16,9 @@ interface CockpitHeaderProps {
 }
 
 export function CockpitHeader({ phaseLabel, status, right, onBack }: CockpitHeaderProps) {
-  const reset = useDemoStore((s) => s.reset);
+  const router = useRouter();
 
-  const handleBack = onBack ?? reset;
+  const handleBack = onBack ?? (() => router.back());
 
   return (
     <header className="flex shrink-0 items-center justify-between bg-[#1a174f] px-6 py-3">

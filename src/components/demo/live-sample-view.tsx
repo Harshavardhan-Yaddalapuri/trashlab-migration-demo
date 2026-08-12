@@ -16,6 +16,7 @@ import { SourceSystemsPanel } from "@/components/cockpit/source-systems-panel";
 import { PipelineActivityPanel } from "@/components/cockpit/pipeline-activity-panel";
 import { ExceptionQueuePanel } from "@/components/cockpit/exception-queue-panel";
 import { formatCount } from "@/components/ui/format";
+import { useRouter } from "next/navigation";
 import type {
   AgentStage,
   ConfidenceSummary,
@@ -98,7 +99,7 @@ const SAMPLE_CONFIDENCE: ConfidenceSummary = {
 };
 
 export function LiveSampleView() {
-  const advance = useDemoStore((s) => s.advance);
+  const router = useRouter();
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
@@ -123,7 +124,7 @@ export function LiveSampleView() {
             </div>
             {complete && (
               <button
-                onClick={advance}
+                onClick={() => router.push("/migrate/batch")}
                 className="inline-flex items-center gap-2 rounded-full bg-[#10b981] px-5 py-2 text-xs font-semibold text-white transition-all hover:bg-[#0d9a6c]"
               >
                 Run full 150k batch

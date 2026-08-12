@@ -14,6 +14,7 @@
 import { useRef, useState } from "react";
 import { useDemoStore } from "@/components/demo/demo-store";
 import { formatCount } from "@/components/ui/format";
+import { useRouter } from "next/navigation";
 
 interface DropFile {
   name: string;
@@ -31,7 +32,7 @@ const SAMPLE_FILES: DropFile[] = [
 const AGENTS = ["Orchestrator", "Intake", "Normalizer", "Resolver", "Mapper", "Validator", "Trainer", "Eval"];
 
 export function FileDropView() {
-  const advance = useDemoStore((s) => s.advance);
+  const router = useRouter();
   const [files, setFiles] = useState<DropFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [started, setStarted] = useState(false);
@@ -221,7 +222,7 @@ export function FileDropView() {
                 ))}
               </div>
               <button
-                onClick={advance}
+                onClick={() => router.push("/migrate/live")}
                 className="mt-8 inline-flex items-center gap-2 rounded-full bg-[#312d97] px-8 py-3 text-sm font-semibold text-white transition-all hover:bg-[#5149d7]"
               >
                 Watch the pipeline run

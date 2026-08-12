@@ -8,7 +8,7 @@ import { FullBatchView } from "@/components/demo/full-batch-view";
 describe("LiveSampleView", () => {
   beforeEach(() => {
     useDemoStore.getState().reset();
-    useDemoStore.getState().goTo("live-sample");
+    useDemoStore.getState().syncFromPath("/migrate/live");
   });
 
   it("renders the live sample header", () => {
@@ -40,7 +40,7 @@ describe("LiveSampleView", () => {
 describe("FullBatchView", () => {
   beforeEach(() => {
     useDemoStore.getState().reset();
-    useDemoStore.getState().goTo("full-batch");
+    useDemoStore.getState().syncFromPath("/migrate/batch");
   });
 
   it("renders the full batch header", () => {

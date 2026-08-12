@@ -17,6 +17,7 @@ import { SourceSystemsPanel } from "@/components/cockpit/source-systems-panel";
 import { PipelineActivityPanel } from "@/components/cockpit/pipeline-activity-panel";
 import { ExceptionQueuePanel } from "@/components/cockpit/exception-queue-panel";
 import { formatCount } from "@/components/ui/format";
+import { useRouter } from "next/navigation";
 import type {
   AgentStage,
   ConfidenceSummary,
@@ -115,7 +116,7 @@ const COMPLETE_EXCEPTIONS: ExceptionQueueItem[] = [
 ];
 
 export function FullBatchView() {
-  const advance = useDemoStore((s) => s.advance);
+  const router = useRouter();
   const [tick, setTick] = useState(0);
 
   // Real timestamps: events fire at relative offsets from mount
@@ -163,7 +164,7 @@ export function FullBatchView() {
             </div>
             {complete && (
               <button
-                onClick={advance}
+                onClick={() => router.push("/migrate/review")}
                 className="inline-flex items-center gap-2 rounded-full bg-[#312d97] px-5 py-2 text-xs font-semibold text-white transition-all hover:bg-[#5149d7]"
               >
                 Review exceptions

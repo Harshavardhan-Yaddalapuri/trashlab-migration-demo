@@ -15,6 +15,7 @@ import { useState } from "react";
 import { useDemoStore } from "@/components/demo/demo-store";
 import { CockpitHeader } from "@/components/cockpit/cockpit-header";
 import { formatCount } from "@/components/ui/format";
+import { useRouter } from "next/navigation";
 
 interface FeaturedException {
   id: string;
@@ -128,7 +129,7 @@ const SEVERITY_STYLES: Record<string, { text: string; badge: string }> = {
 const TOTAL_AGGREGATED = AGGREGATED.reduce((sum, g) => sum + g.count, 0);
 
 export function ExceptionReviewView() {
-  const advance = useDemoStore((s) => s.advance);
+  const router = useRouter();
   const [resolved, setResolved] = useState<Set<string>>(new Set());
   const [bulkResolved, setBulkResolved] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -169,7 +170,7 @@ export function ExceptionReviewView() {
             </div>
             {allDone && (
               <button
-                onClick={advance}
+                onClick={() => router.push("/migrate/report")}
                 className="inline-flex items-center gap-2 rounded-full bg-[#10b981] px-5 py-2 text-xs font-semibold text-white transition-all hover:bg-[#0d9a6c]"
               >
                 View Report

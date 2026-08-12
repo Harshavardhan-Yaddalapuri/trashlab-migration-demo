@@ -7,7 +7,7 @@ import { FileDropView } from "@/components/demo/file-drop-view";
 describe("FileDropView", () => {
   beforeEach(() => {
     useDemoStore.getState().reset();
-    useDemoStore.getState().goTo("file-drop");
+    useDemoStore.getState().syncFromPath("/migrate");
   });
 
   it("renders the file drop header", () => {

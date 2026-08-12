@@ -7,7 +7,7 @@ import { ReportView } from "@/components/demo/report-view";
 describe("ReportView", () => {
   beforeEach(() => {
     useDemoStore.getState().reset();
-    useDemoStore.getState().goTo("report");
+    useDemoStore.getState().syncFromPath("/migrate/report");
   });
 
   it("renders migration complete header", () => {

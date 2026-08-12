@@ -18,6 +18,7 @@ import { useDemoStore } from "@/components/demo/demo-store";
 import { CockpitHeader } from "@/components/cockpit/cockpit-header";
 import { formatCount, formatPercent } from "@/components/ui/format";
 import { config } from "@/lib/config";
+import { useRouter } from "next/navigation";
 
 /** Histogram data matching the full batch. */
 const HISTOGRAM = [
@@ -72,10 +73,16 @@ const AUDIT_EVENTS = [
 ];
 
 export function ReportView() {
+  const router = useRouter();
   const reset = useDemoStore((s) => s.reset);
   const totalRecords = config.demo.totalRecords;
   const autoMapped = 148_800;
   const exceptions = 1_200;
+
+  const runAgain = () => {
+    reset();
+    router.push("/");
+  };
 
   return (
     <div className="flex min-h-screen flex-col bg-white">
@@ -84,7 +91,7 @@ export function ReportView() {
         status={{ label: "done", active: false }}
         right={
           <button
-            onClick={reset}
+            onClick={runAgain}
             className="rounded-full bg-white/10 px-4 py-1.5 text-xs font-semibold text-white/80 transition-colors hover:bg-white/20"
           >
             Run Again

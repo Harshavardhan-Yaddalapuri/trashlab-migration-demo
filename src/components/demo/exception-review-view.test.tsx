@@ -7,7 +7,7 @@ import { ExceptionReviewView } from "@/components/demo/exception-review-view";
 describe("ExceptionReviewView", () => {
   beforeEach(() => {
     useDemoStore.getState().reset();
-    useDemoStore.getState().goTo("exception-review");
+    useDemoStore.getState().syncFromPath("/migrate/review");
   });
 
   it("renders exception review header", () => {
