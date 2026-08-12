@@ -22,7 +22,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       body,
       request,
       onBeforeGenerateToken: async () => ({
-        allowedContentTypes: ["text/csv", "text/tab-separated-values", "text/plain", "application/octet-stream"],
+        // Legacy exports arrive in whatever shape the source system produces.
+        // The browser infers contentType from the file extension, which can
+        // be misleading -- a whitespace-aligned plain-text file named
+        // "*.xlsx" still gets tagged as a real spreadsheet MIME type. Cover
+        // both the plain-text formats these exports actually use and the
+        // real spreadsheet types, rather than rejecting on a mismatch.
+        allowedContentTypes: [
+          "text/csv",
+          "text/tab-separated-values",
+          "text/plain",
+          "text/*",
+          "application/octet-stream",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ],
         addRandomSuffix: true,
         maximumSizeInBytes: 50 * 1024 * 1024,
       }),
