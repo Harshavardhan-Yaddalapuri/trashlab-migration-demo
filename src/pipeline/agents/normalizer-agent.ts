@@ -41,8 +41,17 @@ export function inferEntityType(fields: Record<string, string>): EntityType {
   if (has("serviceCode") || has("rateCents") || (has("startDate") && has("status"))) {
     return "agreement";
   }
-  if (has("sizeYards") || has("type")) return "container";
+  // RoutePro's customer, container, and route rows share one column shape
+  // (name,phone,address,city,state,zip,sizeYards,type,dayOfWeek), with
+  // placeholder sizeYards/type/dayOfWeek values filled on every row kind.
+  // Container and route rows are distinguishable by their generated name
+  // prefix; check those first, or every customer row (which also carries
+  // placeholder sizeYards/type) gets misclassified as a container.
+  const name = fields["name"] ?? "";
+  if (name.startsWith("Container ")) return "container";
+  if (name.startsWith("Route ")) return "route";
   if (has("phone") && has("name")) return "customer";
+  if (has("sizeYards") || has("type")) return "container";
   if (has("name") && has("address") && !has("serviceCode") && !has("dayOfWeek")) {
     return "site";
   }

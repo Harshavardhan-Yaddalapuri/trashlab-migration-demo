@@ -34,9 +34,9 @@ describe("FileDropView", () => {
     useDemoStore.getState().syncFromPath("/migrate");
   });
 
-  it("renders the file drop header", () => {
+  it("renders the connect header", () => {
     render(<FileDropView />);
-    expect(screen.getByText("File Drop")).toBeInTheDocument();
+    expect(screen.getByText("Connect a system")).toBeInTheDocument();
   });
 
   it("renders the drop zone text", () => {
@@ -132,7 +132,7 @@ describe("FileDropView", () => {
     });
   });
 
-  it("shows fleet activated after Start Migration is clicked", async () => {
+  it("shows a connecting state after Start Migration is clicked", async () => {
     render(<FileDropView />);
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
     const file = makeFile("routepro_2019_export.csv", ROUTEPRO_CSV);
@@ -145,7 +145,27 @@ describe("FileDropView", () => {
       expect(screen.getByText("Start Migration")).toBeInTheDocument();
     });
     fireEvent.click(screen.getByText("Start Migration"));
-    expect(screen.getByText("Fleet Activated")).toBeInTheDocument();
+    expect(screen.getByText("Connecting...")).toBeInTheDocument();
+  });
+
+  it("shows a real error, not fake progress, when the API is unreachable", async () => {
+    render(<FileDropView />);
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = makeFile("routepro_2019_export.csv", ROUTEPRO_CSV);
+    Object.defineProperty(input, "files", {
+      value: [file],
+      configurable: true,
+    });
+    fireEvent.change(input);
+    await waitFor(() => {
+      expect(screen.getByText("Start Migration")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("Start Migration"));
+    // jsdom has no real network; createMigrationJob resolves to null.
+    await waitFor(() => {
+      expect(screen.getByText(/Couldn't start the migration/)).toBeInTheDocument();
+    });
+    expect(screen.getByText("Start Migration")).toBeInTheDocument();
   });
 
   it("shows total records after a file is added", async () => {

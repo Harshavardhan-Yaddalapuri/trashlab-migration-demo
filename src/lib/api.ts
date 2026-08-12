@@ -3,9 +3,10 @@
 /**
  * Client-side API helper for the real backend. Every function returns
  * `null` on any failure (network error, non-2xx, bad JSON) instead of
- * throwing, so callers can fall back to the scripted demo data with a
- * simple `?? fallback`. The demo must never break because the API is
- * unreachable.
+ * throwing, so callers can branch on it -- but a `null` result should be
+ * rendered as a real loading/error/retry state, not silently swapped for
+ * fabricated data. This is presented as production software; a real app
+ * doesn't show fake numbers when a request fails.
  */
 
 import type { SourceKind } from "@/lib/types";
@@ -128,6 +129,40 @@ export async function getJobAuditEvents(jobId: string): Promise<JobAuditEvent[] 
   return result?.events ?? null;
 }
 
+export interface EntityRecordException {
+  id: string;
+  type: string;
+  severity: "critical" | "warning" | "info";
+  summary: string;
+  evidence: string[];
+  suggestedFix: string;
+  confidence: number;
+  reviewStatus: "open" | "approved" | "rejected";
+}
+
+export interface EntityRecord {
+  id: string;
+  entityType: string;
+  confidence: number;
+  fields: Record<string, string>;
+  mappedFields: Record<string, unknown> | null;
+  exceptions: EntityRecordException[];
+}
+
+export interface EntityRecordPage {
+  items: EntityRecord[];
+  nextCursor: string | null;
+}
+
+export async function getJobEntities(
+  jobId: string,
+  entityType: string,
+  cursor?: string | null,
+): Promise<EntityRecordPage | null> {
+  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+  return safeFetch<EntityRecordPage>(`/api/v1/migration-jobs/${jobId}/entities/${entityType}${query}`);
+}
+
 export interface JobReport {
   jobId: string;
   generatedAt: string;
@@ -189,6 +224,24 @@ export async function approveException(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ actor, role, mode: "commit" }),
+    },
+  );
+  return result !== null;
+}
+
+export async function rejectException(
+  jobId: string,
+  exceptionId: string,
+  actor: string,
+  role: ExceptionReviewRole,
+  reason: string,
+): Promise<boolean> {
+  const result = await safeFetch<{ exception: { id: string } }>(
+    `/api/jobs/${jobId}/exceptions/${exceptionId}/reject`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actor, role, reason }),
     },
   );
   return result !== null;

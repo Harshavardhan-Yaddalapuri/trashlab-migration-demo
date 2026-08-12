@@ -8,7 +8,7 @@ CREATE TABLE "audit_events" (
 );
 --> statement-breakpoint
 CREATE TABLE "exceptions" (
-	"id" text PRIMARY KEY NOT NULL,
+	"id" text NOT NULL,
 	"job_id" uuid NOT NULL,
 	"type" text NOT NULL,
 	"severity" text NOT NULL,
@@ -24,7 +24,8 @@ CREATE TABLE "exceptions" (
 	"reviewed_at" timestamp with time zone,
 	"rejection_reason" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"resolved_at" timestamp with time zone
+	"resolved_at" timestamp with time zone,
+	CONSTRAINT "exceptions_job_id_id_pk" PRIMARY KEY("job_id","id")
 );
 --> statement-breakpoint
 CREATE TABLE "migration_jobs" (
@@ -70,13 +71,14 @@ CREATE TABLE "raw_records" (
 );
 --> statement-breakpoint
 CREATE TABLE "resolved_entities" (
-	"id" text PRIMARY KEY NOT NULL,
+	"id" text NOT NULL,
 	"job_id" uuid NOT NULL,
 	"entity_type" text NOT NULL,
 	"cluster_id" text NOT NULL,
 	"confidence" real NOT NULL,
 	"merged" boolean DEFAULT false NOT NULL,
-	"canonical_fields" jsonb NOT NULL
+	"canonical_fields" jsonb NOT NULL,
+	CONSTRAINT "resolved_entities_job_id_id_pk" PRIMARY KEY("job_id","id")
 );
 --> statement-breakpoint
 CREATE TABLE "source_files" (
@@ -101,7 +103,6 @@ ALTER TABLE "migration_jobs" ADD CONSTRAINT "migration_jobs_tenant_id_tenants_id
 ALTER TABLE "normalized_records" ADD CONSTRAINT "normalized_records_job_id_migration_jobs_id_fk" FOREIGN KEY ("job_id") REFERENCES "public"."migration_jobs"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "normalized_records" ADD CONSTRAINT "normalized_records_raw_record_id_raw_records_id_fk" FOREIGN KEY ("raw_record_id") REFERENCES "public"."raw_records"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "proposals" ADD CONSTRAINT "proposals_job_id_migration_jobs_id_fk" FOREIGN KEY ("job_id") REFERENCES "public"."migration_jobs"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "proposals" ADD CONSTRAINT "proposals_resolved_entity_id_resolved_entities_id_fk" FOREIGN KEY ("resolved_entity_id") REFERENCES "public"."resolved_entities"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "raw_records" ADD CONSTRAINT "raw_records_job_id_migration_jobs_id_fk" FOREIGN KEY ("job_id") REFERENCES "public"."migration_jobs"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "raw_records" ADD CONSTRAINT "raw_records_source_file_id_source_files_id_fk" FOREIGN KEY ("source_file_id") REFERENCES "public"."source_files"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "resolved_entities" ADD CONSTRAINT "resolved_entities_job_id_migration_jobs_id_fk" FOREIGN KEY ("job_id") REFERENCES "public"."migration_jobs"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint

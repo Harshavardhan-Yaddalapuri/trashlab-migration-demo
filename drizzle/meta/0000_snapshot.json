@@ -1,5 +1,5 @@
 {
-  "id": "b6260d92-642b-4f97-8fcb-b275a0171c89",
+  "id": "198bb049-c2a6-4ae6-9206-f883ad8ca628",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -92,7 +92,7 @@
         "id": {
           "name": "id",
           "type": "text",
-          "primaryKey": true,
+          "primaryKey": false,
           "notNull": true
         },
         "job_id": {
@@ -241,7 +241,15 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
+      "compositePrimaryKeys": {
+        "exceptions_job_id_id_pk": {
+          "name": "exceptions_job_id_id_pk",
+          "columns": [
+            "job_id",
+            "id"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
@@ -544,19 +552,6 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
-        },
-        "proposals_resolved_entity_id_resolved_entities_id_fk": {
-          "name": "proposals_resolved_entity_id_resolved_entities_id_fk",
-          "tableFrom": "proposals",
-          "tableTo": "resolved_entities",
-          "columnsFrom": [
-            "resolved_entity_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -679,7 +674,7 @@
         "id": {
           "name": "id",
           "type": "text",
-          "primaryKey": true,
+          "primaryKey": false,
           "notNull": true
         },
         "job_id": {
@@ -758,7 +753,15 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
+      "compositePrimaryKeys": {
+        "resolved_entities_job_id_id_pk": {
+          "name": "resolved_entities_job_id_id_pk",
+          "columns": [
+            "job_id",
+            "id"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},

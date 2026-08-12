@@ -9,7 +9,7 @@
  * back. The in-memory store is just a per-request working copy.
  */
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { ExceptionCard } from "@/features/review";
 import { putExceptions } from "@/features/review";
 import { db } from "@/server/db/client";
@@ -58,5 +58,5 @@ export async function persistExceptionCard(card: ExceptionCard): Promise<void> {
       rejectionReason: card.rejectionReason ?? null,
       resolvedAt: card.resolvedAt ? new Date(card.resolvedAt) : null,
     })
-    .where(eq(exceptions.id, card.id));
+    .where(and(eq(exceptions.id, card.id), eq(exceptions.jobId, card.jobId)));
 }

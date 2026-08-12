@@ -371,8 +371,13 @@ export function resolveCustomers(
 
   for (const [key, members] of Array.from(buckets.entries())) {
     if (members.length === 1) {
+      // Suffix with the running cluster count, same as the multi-member
+      // branch below: a blocking key can coincidentally collide with
+      // another bucket's "key-N" generated id (both are just strings),
+      // but the strictly-increasing counter can't repeat, so it
+      // guarantees a globally unique clusterId either way.
       clusters.push({
-        clusterId: `${idPrefix}-${key}`,
+        clusterId: `${idPrefix}-${key}-${clusters.length}`,
         memberIds: [members[0].recordId],
         confidence: 1,
         merged: false,

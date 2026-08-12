@@ -10,7 +10,7 @@
  * traceable back through every stage.
  */
 
-import { boolean, index, integer, jsonb, pgTable, real, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgTable, primaryKey, real, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 export const tenants = pgTable("tenants", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -87,10 +87,17 @@ export const normalizedRecords = pgTable(
   ],
 );
 
+// resolved_entities.id and exceptions.id are only globally unique for
+// non-customer entities (they inherit the "e-<normalizedRecordId>" chain,
+// which embeds a fresh per-job UUID). Customer cluster ids are derived
+// purely from record content (name/phone/address blocking key), so the
+// same or similar company can deterministically generate the same id in
+// two different jobs. Both tables use a composite (job_id, id) primary
+// key so uniqueness is scoped per job, not global.
 export const resolvedEntities = pgTable(
   "resolved_entities",
   {
-    id: text("id").primaryKey(),
+    id: text("id").notNull(),
     jobId: uuid("job_id")
       .notNull()
       .references(() => migrationJobs.id),
@@ -101,6 +108,7 @@ export const resolvedEntities = pgTable(
     canonicalFields: jsonb("canonical_fields").notNull(),
   },
   (table) => [
+    primaryKey({ columns: [table.jobId, table.id] }),
     index("resolved_entities_job_entity_idx").on(table.jobId, table.entityType),
   ],
 );
@@ -112,9 +120,11 @@ export const proposals = pgTable(
     jobId: uuid("job_id")
       .notNull()
       .references(() => migrationJobs.id),
-    resolvedEntityId: text("resolved_entity_id")
-      .notNull()
-      .references(() => resolvedEntities.id),
+    // No FK to resolvedEntities.id: that column is no longer unique on its
+    // own now that resolvedEntities uses a composite (job_id, id) key.
+    // Every query already scopes by jobId, so this is enforced at the
+    // application layer, same as exceptions.resolvedEntityId below.
+    resolvedEntityId: text("resolved_entity_id").notNull(),
     entityType: text("entity_type").notNull(),
     targetTable: text("target_table").notNull(),
     targetId: text("target_id").notNull(),
@@ -129,7 +139,7 @@ export const proposals = pgTable(
 export const exceptions = pgTable(
   "exceptions",
   {
-    id: text("id").primaryKey(),
+    id: text("id").notNull(),
     jobId: uuid("job_id")
       .notNull()
       .references(() => migrationJobs.id),
@@ -153,6 +163,7 @@ export const exceptions = pgTable(
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
   },
   (table) => [
+    primaryKey({ columns: [table.jobId, table.id] }),
     index("exceptions_job_type_status_idx").on(table.jobId, table.type, table.reviewStatus),
   ],
 );

@@ -1,20 +1,19 @@
 "use client";
 
 /**
- * File-drop view. A REAL interactive drop zone:
+ * Connect view. A REAL interactive drop zone:
  * - Empty state with click-to-upload and drag-drop
  * - Files appear as cards with remove buttons
  * - Record counts are REAL: the file content is read in the browser
  *   and rows are counted (header excluded, comments skipped)
  * - "Start Migration" enables only when files are present
- * - Fleet activation strip after start
  *
+ * Outcomes-only language throughout: no agent names, no pipeline jargon.
  * Styled to match TrashLab's design language (light, indigo/cyan).
  * No em-dashes in user-facing text.
  */
 
 import { useRef, useState } from "react";
-import { useDemoStore } from "@/components/demo/demo-store";
 import { formatCount } from "@/components/ui/format";
 import { useRouter } from "next/navigation";
 import { createMigrationJob } from "@/lib/api";
@@ -27,8 +26,6 @@ interface DropFile {
   records: number;
   content: string;
 }
-
-const AGENTS = ["Orchestrator", "Intake", "Normalizer", "Resolver", "Mapper", "Validator", "Trainer", "Eval"];
 
 /** Detect the source kind from the filename. */
 function detectKind(name: string): string {
@@ -90,13 +87,11 @@ function readFileRows(file: File): Promise<{ content: string; records: number }>
 
 export function FileDropView() {
   const router = useRouter();
-  const jobId = useDemoStore((s) => s.jobId);
-  const setJobId = useDemoStore((s) => s.setJobId);
   const [files, setFiles] = useState<DropFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const [started, setStarted] = useState(false);
   const [reading, setReading] = useState(false);
-  const [jobCreating, setJobCreating] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const addFiles = async (fileList: FileList | File[]) => {
@@ -118,15 +113,18 @@ export function FileDropView() {
     setReading(false);
   };
 
-  const startMigration = () => {
-    setStarted(true);
-    setJobCreating(true);
-    void createMigrationJob(
+  const startMigration = async () => {
+    setStarting(true);
+    setStartError(false);
+    const created = await createMigrationJob(
       files.map((f) => ({ kind: f.sourceKind, fileName: f.name, recordCount: f.records, content: f.content })),
-    ).then((created) => {
-      setJobId(created?.jobId ?? null);
-      setJobCreating(false);
-    });
+    );
+    if (created) {
+      router.push(`/migrate/processing?job=${created.jobId}`);
+    } else {
+      setStarting(false);
+      setStartError(true);
+    }
   };
 
   const removeFile = (name: string) => {
@@ -152,13 +150,13 @@ export function FileDropView() {
             Migration Cockpit
           </span>
           <span className="rounded-full bg-white/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-white/70">
-            File Drop
+            Connect a system
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <span className={`h-2 w-2 rounded-full ${started ? "bg-[#10b981] cockpit-pulse" : "bg-white/30"}`} aria-hidden />
+          <span className={`h-2 w-2 rounded-full ${starting ? "bg-[#10b981] cockpit-pulse" : "bg-white/30"}`} aria-hidden />
           <span className="text-[10px] font-semibold uppercase tracking-wider text-white/70">
-            {started ? "fleet active" : reading ? "reading files" : "ready"}
+            {starting ? "connecting" : reading ? "reading files" : "ready"}
           </span>
         </div>
       </header>
@@ -249,49 +247,30 @@ export function FileDropView() {
           </div>
 
           {/* Actions */}
-          {files.length > 0 && !started && (
-            <div className="flex items-center justify-center gap-3">
-              <button
-                onClick={startMigration}
-                className="inline-flex items-center gap-2 rounded-full bg-[#312d97] px-8 py-3 text-sm font-semibold text-white transition-all hover:bg-[#5149d7]"
-              >
-                Start Migration
-                <span aria-hidden>{"->"}</span>
-              </button>
-              <button
-                onClick={() => setFiles([])}
-                className="rounded-full border border-[#e0deff] px-6 py-3 text-sm font-medium text-[#6260af] transition-colors hover:bg-[#f7f7ff]"
-              >
-                Clear
-              </button>
-            </div>
-          )}
-
-          {/* Fleet activation */}
-          {started && (
-            <div className="text-center">
-              <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#10b981]">
-                Fleet Activated
-              </p>
-              <div className="flex flex-wrap items-center justify-center gap-2">
-                {AGENTS.map((agent) => (
-                  <span
-                    key={agent}
-                    className="flex items-center gap-1.5 rounded-full border border-[#10b981]/30 bg-[#10b981]/5 px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#10b981]"
-                  >
-                    <span className="h-1.5 w-1.5 rounded-full bg-[#10b981] cockpit-pulse" aria-hidden />
-                    {agent}
-                  </span>
-                ))}
+          {files.length > 0 && (
+            <div className="flex flex-col items-center gap-3">
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  onClick={() => void startMigration()}
+                  disabled={starting}
+                  className="inline-flex items-center gap-2 rounded-full bg-[#312d97] px-8 py-3 text-sm font-semibold text-white transition-all hover:bg-[#5149d7] disabled:opacity-60"
+                >
+                  {starting ? "Connecting..." : "Start Migration"}
+                  <span aria-hidden>{"->"}</span>
+                </button>
+                <button
+                  onClick={() => setFiles([])}
+                  disabled={starting}
+                  className="rounded-full border border-[#e0deff] px-6 py-3 text-sm font-medium text-[#6260af] transition-colors hover:bg-[#f7f7ff] disabled:opacity-60"
+                >
+                  Clear
+                </button>
               </div>
-              <button
-                onClick={() => router.push(jobId ? `/migrate/live?job=${jobId}` : "/migrate/live")}
-                disabled={jobCreating}
-                className="mt-8 inline-flex items-center gap-2 rounded-full bg-[#312d97] px-8 py-3 text-sm font-semibold text-white transition-all hover:bg-[#5149d7] disabled:opacity-60"
-              >
-                {jobCreating ? "Preparing migration..." : "Watch the pipeline run"}
-                <span aria-hidden>{"->"}</span>
-              </button>
+              {startError && (
+                <p className="text-sm text-red-600">
+                  Couldn&apos;t start the migration just now. Try again.
+                </p>
+              )}
             </div>
           )}
         </div>
