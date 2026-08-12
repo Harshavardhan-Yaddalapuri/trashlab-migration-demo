@@ -12,7 +12,7 @@ longest: clean data migration for larger fleets.
 
 ## Live demo
 
-- **URL:** (deploy pending — see below)
+- **URL:** https://trashlab-migration-demo.vercel.app
 - **Repo:** https://github.com/Harshavardhan-Yaddalapuri/trashlab-migration-demo
 
 ### 90-second demo flow
