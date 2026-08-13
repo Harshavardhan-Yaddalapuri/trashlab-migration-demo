@@ -23,7 +23,8 @@ persistence fits comfortably in one serverless function invocation using
 Next.js's `after()` API (run the work after the HTTP response is sent, same
 invocation, no separate worker infrastructure). A real queue would matter at
 multi-tenant, many-concurrent-jobs scale; it wasn't needed for what this
-actually does today.
+actually does today. The dependency itself has since been removed from
+`package.json` rather than left installed and unused.
 
 ## ADR-004: Deterministic core, judgment-only LLM use
 
@@ -107,3 +108,52 @@ during a run and never written to Postgres; the uploaded file in Blob
 storage is the durable record if raw/normalized data is ever needed again,
 and since the pipeline is deterministic, recomputing it from that file is
 exact.
+
+## ADR-012: Remove the commit/rollback/training subsystem
+
+`/api/jobs/[jobId]/commit`, `/rollback`, `/training`, and `/report/csv`
+had zero client callers, and their underlying logic (`src/server/stores.ts`)
+was still the original in-memory `Map`-based store from before Postgres was
+wired up — completely disconnected from where jobs actually live now.
+Calling any of them against a real job would have returned "not found" or
+empty data, not a working feature. This wasn't unused-but-fine; it was
+untested surface area that looked like real capability and wasn't. Removed
+the routes, the stores module, and the two feature folders (`commit`,
+`training`) that only those routes imported.
+
+## ADR-013: Rate limiting via Postgres, not a new service
+
+Job creation needed a rate limit — each call triggers a real pipeline run
+and Postgres writes, and there was no protection against one IP spamming
+it. Rather than add Redis/Upstash for this, `src/server/rate-limit.ts`
+implements a fixed-window limiter as rows in a small `rate_limit_events`
+table on the same Postgres connection already in use, with a cheap
+probabilistic cleanup of old rows instead of a cron job. At this project's
+actual traffic volume, a new piece of infrastructure for this would be
+solving a scale problem that doesn't exist yet.
+
+## ADR-014: Security headers, verified against a real build, not assumed
+
+Added CSP, `X-Frame-Options`, HSTS, and related headers via
+`next.config.ts`. A CSP is exactly the kind of change that can silently
+break an app in a way that's invisible in code review, so it was tested
+against a real local production build (`npm run build && npm run start`)
+running the full upload-to-job-creation flow in a real browser before ever
+deploying. That test caught a real problem: the CSP as first written broke
+the app (`'unsafe-eval'` was required by something in the client bundle,
+even in production). Fixed and re-verified, then confirmed again against
+the live deployment after shipping.
+
+## ADR-015: Lazy Postgres pool, not eager at module import
+
+`src/server/db/client.ts` originally constructed the real `pg.Pool` (and
+validated `DATABASE_URL`) at module scope, so importing the file was enough
+to throw if the variable wasn't set. That's invisible in normal development
+(the env var is always present locally) but broke CI on its first real run:
+Next.js's build imports every route module to read metadata like `runtime`
+and `maxDuration`, without ever calling the handler, and CI has no database
+credentials by design. `db` and `pool` are now lazy proxies — the real
+`Pool` is only constructed on first actual query. Verified with a
+production build run under a completely empty environment (matching what
+CI does) and with real queries against Postgres afterward, to confirm the
+laziness didn't change actual runtime behavior.

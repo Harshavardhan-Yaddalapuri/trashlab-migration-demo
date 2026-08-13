@@ -13,8 +13,9 @@ What AI and code must never touch in this project.
    `src/pipeline/agents/contracts.ts` are the vocabulary.
 4. **No magic numbers.** Configuration lives in `src/lib/config.ts`.
 5. **Deterministic rules own deterministic decisions.** The LLM is never asked
-   to normalize a date, dedupe a customer, or map a service code. LLM judgment
-   is limited to classification, fuzzy suggestions, and training prose.
+   to normalize a date, dedupe a customer, or map a service code. LLM
+   judgment, where used at all, is limited to genuinely ambiguous
+   classification and plain-language explanation.
 6. **Raw and normalized records are never mutated in place.** They're not
    persisted per-row in Postgres (see `docs/Decisions.md`, ADR-011) — they
    exist in memory for the duration of a pipeline run, computed fresh each
@@ -25,6 +26,13 @@ What AI and code must never touch in this project.
 9. **Never operate on corrupted data.** Stop and escalate. The Replit incident
    (agent ran DROP DATABASE despite a freeze instruction) is why.
 10. **Keyset pagination, never OFFSET** on large tables (150k+ records).
+11. **Never construct the Postgres `Pool` eagerly at module scope.** `db` and
+    `pool` in `src/server/db/client.ts` are lazy on purpose (ADR-015) —
+    importing the module must not require a live `DATABASE_URL`, since
+    Next.js's build imports every route module to read its metadata.
+12. **Every API route wraps its logic in `withApiErrorHandling`.** A DB
+    failure should return the app's consistent JSON error shape, never
+    Next's generic framework error page.
 
 ## Process rules
 

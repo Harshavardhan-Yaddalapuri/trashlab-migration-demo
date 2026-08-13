@@ -64,6 +64,10 @@ for why key choices were made. Short version:
   `EntityConfig` per business object (Customers, Agreements today) drives a
   shared list/detail/annotation component, so adding another entity type
   (Sites, Containers, Routes, Tickets) is a config, not a new screen.
+- **Hardening**: security headers (CSP, HSTS, etc.) verified against a real
+  production build before shipping, Postgres-backed rate limiting on job
+  creation, consistent error handling across every API route, and CI
+  (lint/typecheck/test/build) gating pushes to `main`.
 
 ## Stack
 
@@ -108,6 +112,10 @@ npm run dev                  # http://localhost:3000
   target field. That's the most concrete next step.
 - **One migration run at a time per job.** There's no multi-tenant queueing
   or scheduling; this is a single-job pipeline, not a background job system.
+- **No authentication.** Anyone with the URL can start a migration. That was
+  a deliberate original scope decision, not an oversight, and job creation
+  is rate limited -- but real auth would be required before this could hold
+  actual customer data.
 
 ## Docs
 

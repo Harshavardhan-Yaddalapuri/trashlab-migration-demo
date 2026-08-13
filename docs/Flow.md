@@ -55,9 +55,12 @@ Execution trace for a migration job, as actually implemented.
 | Pipeline takes too long / the invocation dies before finishing | The client's polling gives up after a bounded wait and shows a real error screen with a path back to `/migrate`, not an infinite spinner |
 | API unreachable from the browser | Every fetch helper returns `null` on failure; the UI shows a real error/retry state per view, never fabricated numbers |
 | Any exception is `critical` severity | Job status is `failed` (needs review), but all data persisted so far is real and viewable |
+| An API route throws an unexpected error (DB blip, bad input) | Caught by a shared `withApiErrorHandling` wrapper on every route; returns the app's own consistent JSON error shape, not Next's generic framework error |
+| Too many job-creation requests from one IP | Rate limited (`429`, 10/hour) before any DB write or pipeline run starts |
+| An unhandled error in a React render | `error.tsx` shows an app-branded recovery screen with a retry action instead of a blank page; a route that doesn't exist hits `not-found.tsx` |
 
 Not implemented, and not claimed: a message queue, circuit breakers,
-dead-letter quarantine, checkpoint-based resume across separate runs, or
-alerting. Those would matter at a different scale (many concurrent
-tenants/jobs) than what this actually runs today — see `docs/Decisions.md`
-(ADR-003) for the reasoning.
+dead-letter quarantine, checkpoint-based resume across separate runs,
+alerting, or authentication. Those would matter at a different scale (many
+concurrent tenants/jobs, real user accounts) than what this actually runs
+today — see `docs/Decisions.md` (ADR-003) for the message-queue reasoning.

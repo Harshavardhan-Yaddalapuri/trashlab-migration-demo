@@ -16,10 +16,12 @@ System map for the TrashLab Migration Cockpit.
      config, not a new screen.
    - `src/components/{cockpit,exceptions,report}` — small shared UI pieces
      (header, exception card, money formatting) used by the workspace views
-   - `src/features` — one folder per pipeline stage (intake, normalize,
-     resolve, map, validate, review, commit, training, report); this is
-     where report/CSV computation and training-packet logic lives, separate
-     from the pipeline's own agent code
+   - `src/features` — one folder per surface that isn't pipeline-agent code:
+     intake, normalize, resolve, map, validate, review, and report (the
+     outcome-banner computation). A `commit`/`rollback`/`training` batch
+     subsystem lived here earlier but was removed (see `docs/Decisions.md`,
+     ADR-012) — it had no client caller and depended on a stale in-memory
+     store disconnected from the real Postgres-backed jobs
 
 2. **Pipeline (LangGraph)**
    - `src/pipeline/graph.ts` — the `StateGraph` orchestrator: intake →
@@ -42,16 +44,32 @@ System map for the TrashLab Migration Cockpit.
 4. **Server**
    - `src/server/db/schema.ts` — Drizzle schema. `migration_jobs`,
      `source_files`, `resolved_entities`, `proposals`, `exceptions`,
-     `audit_events`, `tenants`
+     `audit_events`, `tenants`, `rate_limit_events`
    - `src/server/db/client.ts` — Drizzle + `pg` `Pool`, pointed at Neon's
-     pooled connection endpoint (required — see "Why the pooled endpoint" in
-     Decisions.md)
+     pooled connection endpoint (required — see ADR entry in
+     `docs/Decisions.md`). Both `db` and `pool` are lazy proxies: the real
+     `Pool` (and its `DATABASE_URL` validation) is only constructed on
+     first actual query, not at module import time (ADR-015) — importing
+     the module, which Next.js's build does for every route to read its
+     metadata, must not itself require a live database
    - `src/server/pipeline-runner.ts` — runs the LangGraph pipeline for a job
      and persists its output via `COPY`, one table at a time
    - `src/server/report-data.ts` — computes the outcome-banner numbers from
      what's actually persisted (no hardcoded metrics)
-   - `src/app/api` — Next.js route handlers, contract-first types in
-     `src/server/api/contracts.ts`
+   - `src/server/rate-limit.ts` — Postgres-backed fixed-window IP rate
+     limiting (no Redis/new infra), used on job creation
+   - `src/server/api/contracts.ts` — contract-first API types, plus
+     `withApiErrorHandling`: every route wraps its logic in this so a DB
+     failure returns the app's own consistent JSON error shape instead of
+     Next's generic framework error page
+   - `src/app/api` — Next.js route handlers
+   - `next.config.ts` — security headers (CSP, X-Frame-Options, HSTS,
+     Permissions-Policy); the CSP allowlist is scoped to exactly what the
+     app calls (Vercel Blob's token exchange and storage domain, Google
+     Fonts) and was verified against a real production build plus a full
+     upload flow before shipping, not assumed
+   - `.github/workflows/ci.yml` — lint, typecheck, test, build on every
+     push/PR to `main`
 
 ## Data flow
 
@@ -71,6 +89,20 @@ deterministic, recomputing it is exact, not an approximation.
 ## Guardrail boundary
 
 Deterministic, reversible work (parsing, normalizing, deduping, mapping) is
-fully automated. The commit step and any exception resolution require a
-human action through the UI — the pipeline itself never silently commits
-low-confidence decisions.
+fully automated inside the pipeline's own `commit` node (in `graph.ts`) --
+it runs without a human in the loop, but its outcome is a business-rule
+verdict, not a silent success: if review turns up any `critical`-severity
+exception, the job's status becomes `failed` (needs a human before this
+migration can be considered done), otherwise `completed`. Either way the
+data is fully persisted. The actual human action lives in the workspace UI:
+reviewing and approving/rejecting individual exceptions
+(`/api/jobs/[jobId]/exceptions/[exceptionId]/approve` and `/reject`) — the
+pipeline never silently resolves a low-confidence decision on its own.
+
+## Abuse protection
+
+Job creation (`POST /api/v1/migration-jobs`) is IP rate limited (10/hour,
+Postgres-backed, see `src/server/rate-limit.ts`) since each call triggers a
+real pipeline run plus Postgres writes, and the `sourceFiles` array is
+capped at 10 entries. Neither requires new infrastructure -- both reuse the
+existing DB connection.
