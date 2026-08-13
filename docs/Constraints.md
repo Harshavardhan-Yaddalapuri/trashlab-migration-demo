@@ -15,8 +15,10 @@ What AI and code must never touch in this project.
 5. **Deterministic rules own deterministic decisions.** The LLM is never asked
    to normalize a date, dedupe a customer, or map a service code. LLM judgment
    is limited to classification, fuzzy suggestions, and training prose.
-6. **Raw records are immutable.** `raw_records` is append-only with a hash.
-   Never mutate ingested data in place.
+6. **Raw and normalized records are never mutated in place.** They're not
+   persisted per-row in Postgres (see `docs/Decisions.md`, ADR-011) — they
+   exist in memory for the duration of a pipeline run, computed fresh each
+   time from the immutable uploaded file in Blob storage.
 7. **The audit log is append-only.** `audit_events` is history; it is never
    edited or deleted.
 8. **No em-dashes in user-facing text.**

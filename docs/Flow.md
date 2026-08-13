@@ -1,38 +1,63 @@
 # Flow
 
-Execution trace for a migration job.
+Execution trace for a migration job, as actually implemented.
 
 ## Happy path
 
-1. User drops 4 legacy source files (RoutePro CSV, QuickBooks export,
-   transfer spreadsheet, legacy export).
-2. `POST /v1/tenants/{tenant_id}/migration-jobs` returns a job id immediately
-   (async task pattern).
-3. LangGraph StateGraph runs: ingest -> normalize -> resolve -> map -> validate
-   -> review -> commit.
-4. Intake parses every record; parse errors are reported, never dropped.
-5. Normalize applies date, phone, id, and name rules.
-6. Resolve buckets by blocking key (phonetic name + phone + address) and
-   compares within buckets only: O(n), not O(n^2). Auto-merge above 0.9
-   confidence; below becomes an exception.
-7. Map converts legacy service codes to the target model with confidence.
-8. Validate checks referential integrity and pricing conflicts.
-9. Exceptions land in the queue with evidence and suggested fixes. A human
-   approves, edits, or rejects. Every action is audited.
-10. Commit is batch-scoped and idempotent; the report shows time-to-go-live,
-    auto-map rate, exception rate, silent-error count, and confidence
-    histogram.
+1. User drops a legacy source file at `/migrate` (RoutePro CSV, QuickBooks
+   export, transfer-station spreadsheet, or a legacy fixed-width export).
+   The browser uploads it directly to Vercel Blob storage (not through the
+   API route), which is what makes real-sized exports work — a serverless
+   function's request body limit would otherwise cap uploads at a few
+   megabytes.
+2. `POST /api/v1/migration-jobs` with the resulting Blob URLs returns a
+   `jobId` immediately (`201`). The pipeline run is scheduled to happen
+   after that response is sent, in the same function invocation.
+3. The LangGraph `StateGraph` runs: intake → normalize → resolve → map →
+   validate → review → commit, streaming progress into the job's row after
+   every stage.
+4. `/migrate/processing` polls the job and shows outcome-level status
+   ("Matching your customers...", not stage names) derived from that
+   progress.
+5. Once the pipeline's compute finishes, its output (resolved entities,
+   mapping proposals, exceptions, audit events) is persisted to Postgres via
+   `COPY`, one table at a time.
+6. Once the job reaches a terminal status, the client lands on `/workspace`:
+   an outcome banner with real numbers, plus Customers and Agreements views
+   populated from what was just persisted. Anything flagged during review
+   shows inline as a plain-language annotation with evidence and a
+   suggested fix; approve/reject persists immediately.
 
-## Failure paths
+## Pipeline internals
 
-| Failure | Detection | Recovery |
-|---------|-----------|----------|
-| LLM provider down | Circuit breaker | Deterministic fallback |
-| Poison record | Parse error | Dead-letter quarantine |
-| Checkpoint stall | Progress metric | Alert + resume |
-| Duplicate event | Idempotency keys | Same event, same result |
-| Browser close | Persisted state | Resume from checkpoint |
-| Partial commit | Batch atomicity | Batch-scoped rollback |
-| Silent errors | Eval golden set | Regression blocks release |
-| Queue overflow | Backpressure | Bounded queues |
-| Schema change mid-job | Version check | Pause, re-evaluate affected only |
+- Intake parses every record; parse errors are attached to the row, not
+  silently dropped.
+- Normalize applies date, phone, container-ID, and name rules; unparseable
+  values are flagged, never guessed.
+- Resolve buckets records by a blocking key (name/phone/address) and only
+  compares within a bucket — O(n), not O(n²). High-confidence matches
+  auto-merge; everything else becomes a reviewable exception.
+- Map converts legacy service codes to the target model through a versioned
+  rule table, with confidence.
+- Validate checks referential integrity (does an agreement reference a real
+  customer/site) and pricing conflicts.
+- A job's overall status becomes `failed` if review turns up any exception
+  marked `critical` severity — that's a business-rule verdict ("needs human
+  review before this can go live"), not a crash. The job's data is still
+  fully persisted and the workspace still renders real results either way.
+
+## Failure paths (what's actually implemented)
+
+| Failure | What happens |
+|---------|--------------|
+| Blob content fails to fetch | The fetch is caught; that source file's content comes through empty rather than the request failing opaquely |
+| A `COPY` write fails (bad data hitting a constraint) | Caught, the job is marked `failed` with the real error message stored on the job row — never left stuck at "in progress" forever |
+| Pipeline takes too long / the invocation dies before finishing | The client's polling gives up after a bounded wait and shows a real error screen with a path back to `/migrate`, not an infinite spinner |
+| API unreachable from the browser | Every fetch helper returns `null` on failure; the UI shows a real error/retry state per view, never fabricated numbers |
+| Any exception is `critical` severity | Job status is `failed` (needs review), but all data persisted so far is real and viewable |
+
+Not implemented, and not claimed: a message queue, circuit breakers,
+dead-letter quarantine, checkpoint-based resume across separate runs, or
+alerting. Those would matter at a different scale (many concurrent
+tenants/jobs) than what this actually runs today — see `docs/Decisions.md`
+(ADR-003) for the reasoning.
