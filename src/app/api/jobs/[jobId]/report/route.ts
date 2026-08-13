@@ -8,7 +8,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { computeReport } from "@/features/report";
-import { apiError } from "@/server/api/contracts";
+import { apiError, withApiErrorHandling } from "@/server/api/contracts";
 import { buildReportInput } from "@/server/report-data";
 
 export const runtime = "nodejs";
@@ -17,30 +17,32 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ jobId: string }> },
 ): Promise<NextResponse> {
-  const { jobId } = await params;
+  return withApiErrorHandling("GET /api/jobs/[jobId]/report", async () => {
+    const { jobId } = await params;
 
-  const input = await buildReportInput(jobId);
-  if (input === null) {
-    return NextResponse.json(
-      apiError("no_data", `Job ${jobId} has no pipeline output yet`),
-      { status: 404 },
-    );
-  }
+    const input = await buildReportInput(jobId);
+    if (input === null) {
+      return NextResponse.json(
+        apiError("no_data", `Job ${jobId} has no pipeline output yet`),
+        { status: 404 },
+      );
+    }
 
-  const report = computeReport(input);
+    const report = computeReport(input);
 
-  return NextResponse.json({
-    jobId: report.jobId,
-    generatedAt: report.generatedAt,
-    totalRecords: report.totalRecords,
-    autoMapped: report.autoMapped,
-    exceptionCount: report.exceptionCount,
-    autoMapRate: report.autoMapRate,
-    exceptionRate: report.exceptionRate,
-    silentErrors: report.silentErrors,
-    goLiveDays: report.goLiveDays,
-    confidenceHistogram: report.confidenceHistogram,
-    bySource: report.bySource,
-    byEntity: report.byEntity,
+    return NextResponse.json({
+      jobId: report.jobId,
+      generatedAt: report.generatedAt,
+      totalRecords: report.totalRecords,
+      autoMapped: report.autoMapped,
+      exceptionCount: report.exceptionCount,
+      autoMapRate: report.autoMapRate,
+      exceptionRate: report.exceptionRate,
+      silentErrors: report.silentErrors,
+      goLiveDays: report.goLiveDays,
+      confidenceHistogram: report.confidenceHistogram,
+      bySource: report.bySource,
+      byEntity: report.byEntity,
+    });
   });
 }

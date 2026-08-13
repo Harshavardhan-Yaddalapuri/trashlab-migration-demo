@@ -7,8 +7,9 @@ import { desc } from "drizzle-orm";
 import { after, NextRequest, NextResponse } from "next/server";
 import { fnv1a } from "@/data/generate";
 import type { SourceFile, SourceKind } from "@/lib/types";
-import { apiError } from "@/server/api/contracts";
+import { apiError, withApiErrorHandling } from "@/server/api/contracts";
 import { db } from "@/server/db/client";
+import { checkRateLimit, clientIpFrom } from "@/server/rate-limit";
 import { migrationJobs, sourceFiles, tenants } from "@/server/db/schema";
 import { runPipelineForJob } from "@/server/pipeline-runner";
 
@@ -17,6 +18,16 @@ export const runtime = "nodejs";
 // after() callback that runs the pipeline and persists its output
 // (150k records means ~500 sequential chunked inserts to Postgres).
 export const maxDuration = 300;
+
+// Each job creation triggers a real pipeline run (tens of seconds of
+// compute plus Postgres writes), so this is capped much tighter than a
+// typical read endpoint would be.
+const RATE_LIMIT_MAX_JOBS_PER_HOUR = 10;
+const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
+
+// A real upload is 1-4 files; this just guards against a malformed or
+// abusive request submitting an absurd array, not a realistic use case.
+const MAX_SOURCE_FILES = 10;
 
 interface SourceFileInput {
   kind: SourceKind;
@@ -54,6 +65,18 @@ async function fetchBlobContent(blobUrl: string): Promise<string | undefined> {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const allowed = await checkRateLimit(
+    `job-create:${clientIpFrom(request)}`,
+    RATE_LIMIT_MAX_JOBS_PER_HOUR,
+    RATE_LIMIT_WINDOW_MS,
+  );
+  if (!allowed) {
+    return NextResponse.json(
+      apiError("rate_limited", "Too many migrations started recently. Try again in a bit."),
+      { status: 429 },
+    );
+  }
+
   let body: CreateJobBody;
   try {
     body = (await request.json()) as CreateJobBody;
@@ -68,6 +91,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
 
+  if (body.sourceFiles.length > MAX_SOURCE_FILES) {
+    return NextResponse.json(
+      apiError("too_many_files", `sourceFiles can't exceed ${MAX_SOURCE_FILES} files per job`),
+      { status: 400 },
+    );
+  }
+
   for (const file of body.sourceFiles) {
     if (!file.kind || !file.fileName || typeof file.recordCount !== "number" || !file.blobUrl) {
       return NextResponse.json(
@@ -77,50 +107,52 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
   }
 
-  const tenantId = await resolveTenantId(body.tenantId);
+  return withApiErrorHandling("POST /api/v1/migration-jobs", async () => {
+    const tenantId = await resolveTenantId(body.tenantId);
 
-  const [job] = await db
-    .insert(migrationJobs)
-    .values({ tenantId, status: "pending", progress: 0 })
-    .returning();
+    const [job] = await db
+      .insert(migrationJobs)
+      .values({ tenantId, status: "pending", progress: 0 })
+      .returning();
 
-  const insertedFiles = await db
-    .insert(sourceFiles)
-    .values(
-      body.sourceFiles.map((file) => ({
-        jobId: job.id,
-        kind: file.kind,
-        fileName: file.fileName,
-        recordCount: file.recordCount,
-        rawHash: fnv1a(file.blobUrl),
-        blobUrl: file.blobUrl,
-      })),
-    )
-    .returning();
+    const insertedFiles = await db
+      .insert(sourceFiles)
+      .values(
+        body.sourceFiles.map((file) => ({
+          jobId: job.id,
+          kind: file.kind,
+          fileName: file.fileName,
+          recordCount: file.recordCount,
+          rawHash: fnv1a(file.blobUrl),
+          blobUrl: file.blobUrl,
+        })),
+      )
+      .returning();
 
-  // Run the pipeline after the response is sent. Blob content is fetched
-  // here and handed to the pipeline as in-memory SourceFile content; the
-  // blobUrl itself is persisted on source_files above as the audit trail
-  // for what was actually uploaded (raw/normalized records aren't kept
-  // per-row in Postgres -- see pipeline-runner.ts).
-  after(async () => {
-    const pipelineInput: SourceFile[] = await Promise.all(
-      insertedFiles.map(async (row, i) => ({
-        id: row.id,
-        kind: row.kind as SourceKind,
-        fileName: row.fileName,
-        recordCount: row.recordCount,
-        rawHash: row.rawHash,
-        ingestedAt: row.ingestedAt.toISOString(),
-        content: await fetchBlobContent(body.sourceFiles[i].blobUrl),
-      })),
-    );
-    await runPipelineForJob(job.id, pipelineInput).catch((err) => {
-      console.error(`pipeline run failed for job ${job.id}:`, err);
+    // Run the pipeline after the response is sent. Blob content is fetched
+    // here and handed to the pipeline as in-memory SourceFile content; the
+    // blobUrl itself is persisted on source_files above as the audit trail
+    // for what was actually uploaded (raw/normalized records aren't kept
+    // per-row in Postgres -- see pipeline-runner.ts).
+    after(async () => {
+      const pipelineInput: SourceFile[] = await Promise.all(
+        insertedFiles.map(async (row, i) => ({
+          id: row.id,
+          kind: row.kind as SourceKind,
+          fileName: row.fileName,
+          recordCount: row.recordCount,
+          rawHash: row.rawHash,
+          ingestedAt: row.ingestedAt.toISOString(),
+          content: await fetchBlobContent(body.sourceFiles[i].blobUrl),
+        })),
+      );
+      await runPipelineForJob(job.id, pipelineInput).catch((err) => {
+        console.error(`pipeline run failed for job ${job.id}:`, err);
+      });
     });
-  });
 
-  return NextResponse.json({ jobId: job.id, status: job.status }, { status: 201 });
+    return NextResponse.json({ jobId: job.id, status: job.status }, { status: 201 });
+  });
 }
 
 export async function GET(): Promise<NextResponse> {

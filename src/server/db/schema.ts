@@ -18,6 +18,19 @@ export const tenants = pgTable("tenants", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** One row per rate-limited action. No new infra -- reuses the existing
+ * Postgres connection instead of adding Redis for something this low-volume. */
+export const rateLimitEvents = pgTable(
+  "rate_limit_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** e.g. "job-create:203.0.113.4" */
+    key: text("key").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("rate_limit_events_key_created_idx").on(table.key, table.createdAt)],
+);
+
 export const migrationJobs = pgTable(
   "migration_jobs",
   {

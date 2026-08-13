@@ -19,7 +19,6 @@
     "@langchain/langgraph": "^1.0.0",
     "@tailwindcss/postcss": "^4.0.0",
     "@vercel/blob": "^2.8.0",
-    "bullmq": "^5.0.0",
     "drizzle-orm": "^0.38.0",
     "langchain": "^1.0.0",
     "langsmith": "^0.3.0",

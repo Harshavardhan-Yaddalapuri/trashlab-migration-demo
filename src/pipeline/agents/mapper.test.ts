@@ -12,7 +12,6 @@ function ctx() {
 function resolvedEntity(id: string, fields: Record<string, string>, entityType: string = "agreement"): ResolvedEntity {
   return {
     id,
-    rawRecordId: `raw-${id}`,
     entityType: entityType as ResolvedEntity["entityType"],
     clusterId: `c-${id}`,
     confidence: 1,

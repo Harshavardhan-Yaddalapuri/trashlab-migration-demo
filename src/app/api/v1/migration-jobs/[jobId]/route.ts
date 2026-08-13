@@ -4,7 +4,7 @@
 
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
-import { apiError } from "@/server/api/contracts";
+import { apiError, withApiErrorHandling } from "@/server/api/contracts";
 import { db } from "@/server/db/client";
 import { migrationJobs, sourceFiles } from "@/server/db/schema";
 
@@ -16,37 +16,39 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ jobId: string }> },
 ): Promise<NextResponse> {
-  const { jobId } = await params;
+  return withApiErrorHandling("GET /api/v1/migration-jobs/[jobId]", async () => {
+    const { jobId } = await params;
 
-  if (!UUID_RE.test(jobId)) {
-    return NextResponse.json(apiError("not_found", `Job ${jobId} not found`), { status: 404 });
-  }
+    if (!UUID_RE.test(jobId)) {
+      return NextResponse.json(apiError("not_found", `Job ${jobId} not found`), { status: 404 });
+    }
 
-  const [job] = await db.select().from(migrationJobs).where(eq(migrationJobs.id, jobId)).limit(1);
+    const [job] = await db.select().from(migrationJobs).where(eq(migrationJobs.id, jobId)).limit(1);
 
-  if (!job) {
-    return NextResponse.json(apiError("not_found", `Job ${jobId} not found`), { status: 404 });
-  }
+    if (!job) {
+      return NextResponse.json(apiError("not_found", `Job ${jobId} not found`), { status: 404 });
+    }
 
-  const files = await db.select().from(sourceFiles).where(eq(sourceFiles.jobId, jobId));
+    const files = await db.select().from(sourceFiles).where(eq(sourceFiles.jobId, jobId));
 
-  return NextResponse.json({
-    job: {
-      id: job.id,
-      tenantId: job.tenantId,
-      status: job.status,
-      progress: job.progress,
-      stageProgress: job.stageProgress,
-      createdAt: job.createdAt,
-      updatedAt: job.updatedAt,
-      sourceFiles: files.map((file) => ({
-        id: file.id,
-        kind: file.kind,
-        fileName: file.fileName,
-        recordCount: file.recordCount,
-        rawHash: file.rawHash,
-        ingestedAt: file.ingestedAt,
-      })),
-    },
+    return NextResponse.json({
+      job: {
+        id: job.id,
+        tenantId: job.tenantId,
+        status: job.status,
+        progress: job.progress,
+        stageProgress: job.stageProgress,
+        createdAt: job.createdAt,
+        updatedAt: job.updatedAt,
+        sourceFiles: files.map((file) => ({
+          id: file.id,
+          kind: file.kind,
+          fileName: file.fileName,
+          recordCount: file.recordCount,
+          rawHash: file.rawHash,
+          ingestedAt: file.ingestedAt,
+        })),
+      },
+    });
   });
 }

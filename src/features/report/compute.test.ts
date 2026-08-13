@@ -12,7 +12,7 @@ import {
   sourceBreakdownToCsv,
   toCsv,
 } from "./compute";
-import type { ReportInput } from "./types";
+import type { CsvRow, ReportInput } from "./types";
 
 function makeInput(overrides: Partial<ReportInput> = {}): ReportInput {
   return {
@@ -219,7 +219,7 @@ describe("toCsv", () => {
   });
 
   it("handles missing fields", () => {
-    const rows = [{ a: "1" }, { a: "2", b: "extra" }];
+    const rows: CsvRow[] = [{ a: "1" }, { a: "2", b: "extra" }];
     const csv = toCsv(rows);
 
     // Header from first row keys only
